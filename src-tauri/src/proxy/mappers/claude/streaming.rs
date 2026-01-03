@@ -7,6 +7,43 @@ use crate::proxy::mappers::signature_store::store_thought_signature;
 use bytes::Bytes;
 use serde_json::json;
 
+/// Known parameter remappings for Gemini → Claude compatibility
+/// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
+fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
+    if let Some(obj) = args.as_object_mut() {
+        match tool_name {
+            "Grep" => {
+                // Gemini uses "query", Claude Code expects "pattern"
+                if let Some(query) = obj.remove("query") {
+                    if !obj.contains_key("pattern") {
+                        obj.insert("pattern".to_string(), query);
+                        tracing::debug!("[Streaming] Remapped Grep: query → pattern");
+                    }
+                }
+            }
+            "Glob" => {
+                // Similar remapping if needed
+                if let Some(query) = obj.remove("query") {
+                    if !obj.contains_key("pattern") {
+                        obj.insert("pattern".to_string(), query);
+                        tracing::debug!("[Streaming] Remapped Glob: query → pattern");
+                    }
+                }
+            }
+            "Read" => {
+                // Gemini might use "path" vs "file_path"
+                if let Some(path) = obj.remove("path") {
+                    if !obj.contains_key("file_path") {
+                        obj.insert("file_path".to_string(), path);
+                        tracing::debug!("[Streaming] Remapped Read: path → file_path");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// 块类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockType {
@@ -636,8 +673,12 @@ impl<'a> PartProcessor<'a> {
         chunks.extend(self.state.start_block(BlockType::Function, tool_use));
 
         // 2. 发送 input_json_delta (完整的参数 JSON 字符串)
+        // [FIX] Remap args before serialization for Gemini → Claude compatibility
         if let Some(args) = &fc.args {
-            let json_str = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
+            let mut remapped_args = args.clone();
+            remap_function_call_args(&fc.name, &mut remapped_args);
+            let json_str =
+                serde_json::to_string(&remapped_args).unwrap_or_else(|_| "{}".to_string());
             chunks.push(
                 self.state
                     .emit_delta("input_json_delta", json!({ "partial_json": json_str })),
