@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const GITHUB_API_URL: &str = "https://api.github.com/repos/lbjlaq/Antigravity-Manager/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CHECK_INTERVAL_HOURS: u64 = 24;
+const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 24;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -19,6 +19,12 @@ pub struct UpdateInfo {
 pub struct UpdateSettings {
     pub auto_check: bool,
     pub last_check_time: u64,
+    #[serde(default = "default_check_interval")]
+    pub check_interval_hours: u64,
+}
+
+fn default_check_interval() -> u64 {
+    DEFAULT_CHECK_INTERVAL_HOURS
 }
 
 impl Default for UpdateSettings {
@@ -26,6 +32,7 @@ impl Default for UpdateSettings {
         Self {
             auto_check: true,
             last_check_time: 0,
+            check_interval_hours: DEFAULT_CHECK_INTERVAL_HOURS,
         }
     }
 }
@@ -114,7 +121,12 @@ pub fn should_check_for_updates(settings: &UpdateSettings) -> bool {
         .as_secs();
 
     let elapsed_hours = (now - settings.last_check_time) / 3600;
-    elapsed_hours >= CHECK_INTERVAL_HOURS
+    let interval = if settings.check_interval_hours > 0 {
+        settings.check_interval_hours
+    } else {
+        DEFAULT_CHECK_INTERVAL_HOURS
+    };
+    elapsed_hours >= interval
 }
 
 /// Load update settings from config file

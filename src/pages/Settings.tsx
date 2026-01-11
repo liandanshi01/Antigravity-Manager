@@ -57,9 +57,13 @@ function Settings() {
             .catch(err => console.error('Failed to get data dir:', err));
 
         // 加载更新设置
-        invoke<{ auto_check: boolean; last_check_time: number }>('get_update_settings')
+        invoke<{ auto_check: boolean; last_check_time: number; check_interval_hours: number }>('get_update_settings')
             .then(settings => {
-                setFormData(prev => ({ ...prev, auto_check_update: settings.auto_check }));
+                setFormData(prev => ({
+                    ...prev,
+                    auto_check_update: settings.auto_check,
+                    update_check_interval: settings.check_interval_hours
+                }));
             })
             .catch(err => console.error('Failed to load update settings:', err));
     }, [loadConfig]);
@@ -328,6 +332,20 @@ function Settings() {
                                         max="168"
                                         value={formData.update_check_interval ?? 24}
                                         onChange={(e) => setFormData({ ...formData, update_check_interval: parseInt(e.target.value) })}
+                                        onBlur={async () => {
+                                            try {
+                                                await invoke('save_update_settings', {
+                                                    settings: {
+                                                        auto_check: formData.auto_check_update ?? true,
+                                                        last_check_time: 0,
+                                                        check_interval_hours: formData.update_check_interval ?? 24
+                                                    }
+                                                });
+                                                showToast('已保存检查间隔设置', 'success');
+                                            } catch (error) {
+                                                showToast(`${t('common.error')}: ${error}`, 'error');
+                                            }
+                                        }}
                                     />
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">设置自动检查更新的时间间隔（1-168 小时）</p>
                                 </div>
