@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 // use std::path::PathBuf;
 use std::collections::HashMap;
 
@@ -122,11 +122,11 @@ pub struct ExperimentalConfig {
     /// 启用双层签名缓存 (Signature Cache)
     #[serde(default = "default_true")]
     pub enable_signature_cache: bool,
-    
+
     /// 启用工具循环自动恢复 (Tool Loop Recovery)
     #[serde(default = "default_true")]
     pub enable_tool_loop_recovery: bool,
-    
+
     /// 启用跨模型兼容性检查 (Cross-Model Checks)
     #[serde(default = "default_true")]
     pub enable_cross_model_checks: bool,
@@ -148,7 +148,9 @@ impl Default for ExperimentalConfig {
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// 反代服务配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,13 +171,13 @@ pub struct ProxyConfig {
     /// - auto: recommended defaults (currently: allow_lan_access => all_except_health, else off)
     #[serde(default)]
     pub auth_mode: ProxyAuthMode,
-    
+
     /// 监听端口
     pub port: u16,
-    
-    /// API 密钥
-    pub api_key: String,
-    
+
+    /// API 密钥列表（支持多个密钥）
+    #[serde(default, deserialize_with = "deserialize_api_keys")]
+    pub api_keys: Vec<String>,
 
     /// 是否自动启动
     pub auto_start: bool,
@@ -199,7 +201,7 @@ pub struct ProxyConfig {
     /// z.ai provider configuration (Anthropic-compatible).
     #[serde(default)]
     pub zai: ZaiConfig,
-    
+
     /// 账号调度配置 (粘性会话/限流重试)
     #[serde(default)]
     pub scheduling: crate::proxy::sticky_config::StickySessionConfig,
@@ -225,7 +227,7 @@ impl Default for ProxyConfig {
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             auth_mode: ProxyAuthMode::default(),
             port: 8045,
-            api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
+            api_keys: vec![format!("sk-{}", uuid::Uuid::new_v4().simple())],
             auto_start: false,
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
@@ -239,7 +241,7 @@ impl Default for ProxyConfig {
 }
 
 fn default_request_timeout() -> u64 {
-    120  // 默认 120 秒,原来 60 秒太短
+    120 // 默认 120 秒,原来 60 秒太短
 }
 
 fn default_zai_base_url() -> String {
@@ -269,4 +271,65 @@ impl ProxyConfig {
             "127.0.0.1"
         }
     }
+}
+
+/// 自定义反序列化器：支持旧版单个 api_key 字符串和新版 api_keys 数组
+fn deserialize_api_keys<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct ApiKeysVisitor;
+
+    impl<'de> Visitor<'de> for ApiKeysVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or array of strings")
+        }
+
+        // 处理单个字符串（旧版格式）
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![value.to_string()])
+            }
+        }
+
+        // 处理字符串数组（新版格式）
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut keys = Vec::new();
+            while let Some(key) = seq.next_element::<String>()? {
+                if !key.is_empty() {
+                    keys.push(key);
+                }
+            }
+            Ok(keys)
+        }
+
+        // 处理 null
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    deserializer.deserialize_any(ApiKeysVisitor)
 }
