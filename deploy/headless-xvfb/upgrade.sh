@@ -6,7 +6,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-REPO="lbjlaq/Antigravity-Manager"
+
+REPO="liandanshi01/Antigravity-Manager"
 
 # 获取远程最新版本
 LATEST=$(curl -sfS "https://api.github.com/repos/${REPO}/releases/latest" | jq -r '.tag_name // empty' | sed 's/^v//')
