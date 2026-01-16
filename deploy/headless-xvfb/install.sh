@@ -11,7 +11,7 @@ else
     cd "$(dirname "$0")"
 fi
 
-REPO="lbjlaq/Antigravity-Manager"
+REPO="liandanshi01/Antigravity-Manager"
 
 echo "[1/4] 安装依赖..."
 if command -v apt-get &>/dev/null; then

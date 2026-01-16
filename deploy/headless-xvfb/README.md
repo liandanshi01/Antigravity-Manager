@@ -5,13 +5,13 @@
 ## 一键安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/deploy/headless-xvfb/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/liandanshi01/Antigravity-Manager/refs/heads/feature/mut-key/deploy/headless-xvfb/install.sh | sudo bash
 ```
 
 或者（更安全，先审查脚本）：
 
 ```bash
-curl -O https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/deploy/headless-xvfb/install.sh
+curl -O https://raw.githubusercontent.com/liandanshi01/Antigravity-Manager/refs/heads/feature/mut-key/deploy/headless-xvfb/install.sh
 cat install.sh  # 审查脚本
 sudo bash install.sh
 ```
