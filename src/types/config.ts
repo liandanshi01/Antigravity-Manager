@@ -8,7 +8,7 @@ export interface ProxyConfig {
     allow_lan_access?: boolean;
     auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
     port: number;
-    api_key: string;
+    api_keys: string[];
     auto_start: boolean;
     custom_mapping?: Record<string, string>;
     request_timeout: number;

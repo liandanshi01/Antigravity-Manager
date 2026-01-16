@@ -26,7 +26,7 @@ function Settings() {
         proxy: {
             enabled: false,
             port: 8080,
-            api_key: '',
+            api_keys: [],
             auto_start: false,
             request_timeout: 120,
             enable_logging: false,

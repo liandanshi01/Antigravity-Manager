@@ -1,7 +1,7 @@
 // API Key 认证中间件
 use axum::{
-    extract::State,
     extract::Request,
+    extract::State,
     http::{header, StatusCode},
     middleware::Next,
     response::Response,
@@ -42,7 +42,7 @@ pub async fn auth_middleware(
     if matches!(effective_mode, ProxyAuthMode::AllExceptHealth) && path == "/healthz" {
         return Ok(next.run(request).await);
     }
-    
+
     // 从 header 中提取 API key
     let api_key = request
         .headers()
@@ -56,13 +56,15 @@ pub async fn auth_middleware(
                 .and_then(|h| h.to_str().ok())
         });
 
-    if security.api_key.is_empty() {
-        tracing::error!("Proxy auth is enabled but api_key is empty; denying request");
+    if security.api_keys.is_empty() {
+        tracing::error!("Proxy auth is enabled but api_keys is empty; denying request");
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Constant-time compare is unnecessary here, but keep strict equality and avoid leaking values.
-    let authorized = api_key.map(|k| k == security.api_key).unwrap_or(false);
+    // Check if the provided key matches any of the configured keys
+    let authorized = api_key
+        .map(|k| security.api_keys.iter().any(|valid_key| k == valid_key))
+        .unwrap_or(false);
 
     if authorized {
         Ok(next.run(request).await)

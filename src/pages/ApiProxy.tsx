@@ -158,10 +158,12 @@ export default function ApiProxy() {
     // API Key editing states
     const [isEditingApiKey, setIsEditingApiKey] = useState(false);
     const [tempApiKey, setTempApiKey] = useState('');
+    const [editingKeyIndex, setEditingKeyIndex] = useState<number | null>(null);
+    const [newApiKeyInput, setNewApiKeyInput] = useState('');
+    const [isAddingNewKey, setIsAddingNewKey] = useState(false);
 
     // Modal states
     const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
-    const [isRegenerateKeyConfirmOpen, setIsRegenerateKeyConfirmOpen] = useState(false);
     const [isClearBindingsConfirmOpen, setIsClearBindingsConfirmOpen] = useState(false);
 
     const zaiModelOptions = useMemo(() => {
@@ -474,22 +476,6 @@ export default function ApiProxy() {
         }
     };
 
-    const handleGenerateApiKey = () => {
-        setIsRegenerateKeyConfirmOpen(true);
-    };
-
-    const executeGenerateApiKey = async () => {
-        setIsRegenerateKeyConfirmOpen(false);
-        try {
-            const newKey = await invoke<string>('generate_api_key');
-            updateProxyConfig({ api_key: newKey });
-            showToast(t('common.success'), 'success');
-        } catch (error: any) {
-            console.error('生成 API Key 失败:', error);
-            showToast(t('proxy.dialog.operate_failed', { error: error.toString() }), 'error');
-        }
-    };
-
     const copyToClipboard = (text: string, label: string) => {
         navigator.clipboard.writeText(text).then(() => {
             setCopied(label);
@@ -503,8 +489,10 @@ export default function ApiProxy() {
         return key.startsWith('sk-') && key.length >= 10;
     };
 
-    const handleEditApiKey = () => {
-        setTempApiKey(appConfig?.proxy.api_key || '');
+    const handleEditApiKey = (index: number) => {
+        const keys = appConfig?.proxy.api_keys || [];
+        setTempApiKey(keys[index] || '');
+        setEditingKeyIndex(index);
         setIsEditingApiKey(true);
     };
 
@@ -513,14 +501,60 @@ export default function ApiProxy() {
             showToast(t('proxy.config.api_key_invalid'), 'error');
             return;
         }
-        updateProxyConfig({ api_key: tempApiKey });
+        if (editingKeyIndex !== null && appConfig) {
+            const newKeys = [...(appConfig.proxy.api_keys || [])];
+            newKeys[editingKeyIndex] = tempApiKey;
+            updateProxyConfig({ api_keys: newKeys });
+            showToast(t('proxy.config.api_key_updated'), 'success');
+        }
         setIsEditingApiKey(false);
-        showToast(t('proxy.config.api_key_updated'), 'success');
+        setEditingKeyIndex(null);
+        setTempApiKey('');
     };
 
     const handleCancelEditApiKey = () => {
         setTempApiKey('');
         setIsEditingApiKey(false);
+        setEditingKeyIndex(null);
+    };
+
+    const handleAddNewKey = async () => {
+        try {
+            const newKey = await invoke<string>('generate_api_key');
+            const currentKeys = appConfig?.proxy.api_keys || [];
+            updateProxyConfig({ api_keys: [...currentKeys, newKey] });
+            showToast(t('proxy.config.api_key_added') || 'API Key added', 'success');
+        } catch (error: any) {
+            console.error('生成 API Key 失败:', error);
+            showToast(t('proxy.dialog.operate_failed', { error: error.toString() }), 'error');
+        }
+    };
+
+    const handleAddCustomKey = () => {
+        if (!validateApiKey(newApiKeyInput)) {
+            showToast(t('proxy.config.api_key_invalid'), 'error');
+            return;
+        }
+        const currentKeys = appConfig?.proxy.api_keys || [];
+        if (currentKeys.includes(newApiKeyInput)) {
+            showToast(t('proxy.config.api_key_duplicate') || 'Key already exists', 'error');
+            return;
+        }
+        updateProxyConfig({ api_keys: [...currentKeys, newApiKeyInput] });
+        setNewApiKeyInput('');
+        setIsAddingNewKey(false);
+        showToast(t('proxy.config.api_key_added') || 'API Key added', 'success');
+    };
+
+    const handleRemoveKey = (index: number) => {
+        const currentKeys = appConfig?.proxy.api_keys || [];
+        if (currentKeys.length <= 1) {
+            showToast(t('proxy.config.api_key_min_one') || 'At least one key is required', 'error');
+            return;
+        }
+        const newKeys = currentKeys.filter((_, i) => i !== index);
+        updateProxyConfig({ api_keys: newKeys });
+        showToast(t('proxy.config.api_key_removed') || 'API Key removed', 'success');
     };
 
 
@@ -528,7 +562,7 @@ export default function ApiProxy() {
         const port = status.running ? status.port : (appConfig?.proxy.port || 8045);
         // 推荐使用 127.0.0.1 以避免部分环境 IPv6 解析延迟问题
         const baseUrl = `http://127.0.0.1:${port}/v1`;
-        const apiKey = appConfig?.proxy.api_key || 'YOUR_API_KEY';
+        const apiKey = (appConfig?.proxy.api_keys || [])[0] || 'YOUR_API_KEY';
 
         // 1. Anthropic Protocol
         if (selectedProtocol === 'anthropic') {
@@ -852,77 +886,136 @@ print(response.text)`;
                                 </div>
                             </div>
 
-                            {/* API 密钥 */}
+                            {/* API 密钥列表 */}
                             <div>
                                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                                     <span className="inline-flex items-center gap-1">
-                                        {t('proxy.config.api_key')}
+                                        {t('proxy.config.api_keys') || t('proxy.config.api_key')}
                                         <HelpTooltip
-                                            text={t('proxy.config.api_key_tooltip')}
-                                            ariaLabel={t('proxy.config.api_key')}
+                                            text={t('proxy.config.api_keys_tooltip') || t('proxy.config.api_key_tooltip')}
+                                            ariaLabel={t('proxy.config.api_keys') || t('proxy.config.api_key')}
                                             placement="right"
                                         />
+                                        <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-2">
+                                            ({(appConfig.proxy.api_keys || []).length} {t('common.items') || 'keys'})
+                                        </span>
                                     </span>
                                 </label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={isEditingApiKey ? tempApiKey : (appConfig.proxy.api_key)}
-                                        onChange={(e) => isEditingApiKey && setTempApiKey(e.target.value)}
-                                        readOnly={!isEditingApiKey}
-                                        className={`flex-1 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg text-xs font-mono ${isEditingApiKey
-                                            ? 'bg-white dark:bg-base-200 text-gray-900 dark:text-base-content'
-                                            : 'bg-gray-50 dark:bg-base-300 text-gray-600 dark:text-gray-400'
-                                            }`}
-                                    />
-                                    {isEditingApiKey ? (
-                                        <>
-                                            <button
-                                                onClick={handleSaveApiKey}
-                                                className="px-2.5 py-1.5 border border-green-300 dark:border-green-700 rounded-lg bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors text-green-600 dark:text-green-400"
-                                                title={t('proxy.config.btn_save')}
-                                            >
-                                                <CheckCircle size={14} />
-                                            </button>
-                                            <button
-                                                onClick={handleCancelEditApiKey}
-                                                className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
-                                                title={t('common.cancel')}
-                                            >
-                                                <X size={14} />
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <button
-                                                onClick={handleEditApiKey}
-                                                className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
-                                                title={t('proxy.config.btn_edit')}
-                                            >
-                                                <Edit2 size={14} />
-                                            </button>
-                                            <button
-                                                onClick={handleGenerateApiKey}
-                                                className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
-                                                title={t('proxy.config.btn_regenerate')}
-                                            >
-                                                <RefreshCw size={14} />
-                                            </button>
-                                            <button
-                                                onClick={() => copyToClipboard(appConfig.proxy.api_key, 'api_key')}
-                                                className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
-                                                title={t('proxy.config.btn_copy')}
-                                            >
-                                                {copied === 'api_key' ? (
-                                                    <CheckCircle size={14} className="text-green-500" />
-                                                ) : (
-                                                    <Copy size={14} />
-                                                )}
-                                            </button>
-                                        </>
-                                    )}
+
+                                {/* Key List */}
+                                <div className="space-y-1.5 mb-2">
+                                    {(appConfig.proxy.api_keys || []).map((key, index) => (
+                                        <div key={index} className="flex gap-2 items-center">
+                                            {isEditingApiKey && editingKeyIndex === index ? (
+                                                <>
+                                                    <input
+                                                        type="text"
+                                                        value={tempApiKey}
+                                                        onChange={(e) => setTempApiKey(e.target.value)}
+                                                        className="flex-1 px-2.5 py-1.5 border border-blue-300 dark:border-blue-600 rounded-lg bg-white dark:bg-base-200 text-xs font-mono text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500"
+                                                        autoFocus
+                                                    />
+                                                    <button
+                                                        onClick={handleSaveApiKey}
+                                                        className="px-2.5 py-1.5 border border-green-300 dark:border-green-700 rounded-lg bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors text-green-600 dark:text-green-400"
+                                                        title={t('proxy.config.btn_save')}
+                                                    >
+                                                        <CheckCircle size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={handleCancelEditApiKey}
+                                                        className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
+                                                        title={t('common.cancel')}
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <input
+                                                        type="text"
+                                                        value={key}
+                                                        readOnly
+                                                        className="flex-1 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-gray-50 dark:bg-base-300 text-xs font-mono text-gray-600 dark:text-gray-400"
+                                                    />
+                                                    <button
+                                                        onClick={() => handleEditApiKey(index)}
+                                                        className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
+                                                        title={t('proxy.config.btn_edit')}
+                                                    >
+                                                        <Edit2 size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => copyToClipboard(key, `api_key_${index}`)}
+                                                        className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
+                                                        title={t('proxy.config.btn_copy')}
+                                                    >
+                                                        {copied === `api_key_${index}` ? (
+                                                            <CheckCircle size={14} className="text-green-500" />
+                                                        ) : (
+                                                            <Copy size={14} />
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleRemoveKey(index)}
+                                                        disabled={(appConfig.proxy.api_keys || []).length <= 1}
+                                                        className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white dark:disabled:hover:bg-base-200 disabled:hover:text-current disabled:hover:border-gray-300"
+                                                        title={t('proxy.config.btn_delete') || 'Delete'}
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
                                 </div>
-                                <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-500">
+
+                                {/* Add New Key Section */}
+                                {isAddingNewKey ? (
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                            type="text"
+                                            value={newApiKeyInput}
+                                            onChange={(e) => setNewApiKeyInput(e.target.value)}
+                                            placeholder="sk-..."
+                                            className="flex-1 px-2.5 py-1.5 border border-blue-300 dark:border-blue-600 rounded-lg bg-white dark:bg-base-200 text-xs font-mono text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500"
+                                            autoFocus
+                                        />
+                                        <button
+                                            onClick={handleAddCustomKey}
+                                            className="px-2.5 py-1.5 border border-green-300 dark:border-green-700 rounded-lg bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors text-green-600 dark:text-green-400"
+                                            title={t('common.save')}
+                                        >
+                                            <CheckCircle size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => { setIsAddingNewKey(false); setNewApiKeyInput(''); }}
+                                            className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
+                                            title={t('common.cancel')}
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={handleAddNewKey}
+                                            className="px-3 py-1.5 border border-blue-300 dark:border-blue-600 rounded-lg bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors text-blue-600 dark:text-blue-400 text-xs font-medium flex items-center gap-1.5"
+                                        >
+                                            <Plus size={14} />
+                                            {t('proxy.config.btn_generate_key') || 'Generate New Key'}
+                                        </button>
+                                        <button
+                                            onClick={() => setIsAddingNewKey(true)}
+                                            className="px-3 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors text-gray-600 dark:text-gray-400 text-xs font-medium flex items-center gap-1.5"
+                                        >
+                                            <Edit2 size={14} />
+                                            {t('proxy.config.btn_add_custom_key') || 'Add Custom Key'}
+                                        </button>
+                                    </div>
+                                )}
+
+                                <p className="mt-1.5 text-[10px] text-amber-600 dark:text-amber-500">
                                     {t('proxy.config.warning_key')}
                                 </p>
                             </div>
@@ -1658,15 +1751,7 @@ print(response.text)`;
                     onCancel={() => setIsResetConfirmOpen(false)}
                 />
 
-                <ModalDialog
-                    isOpen={isRegenerateKeyConfirmOpen}
-                    title={t('proxy.dialog.regenerate_key_title') || t('proxy.dialog.confirm_regenerate')}
-                    message={t('proxy.dialog.regenerate_key_msg') || t('proxy.dialog.confirm_regenerate')}
-                    type="confirm"
-                    isDestructive={true}
-                    onConfirm={executeGenerateApiKey}
-                    onCancel={() => setIsRegenerateKeyConfirmOpen(false)}
-                />
+
 
                 <ModalDialog
                     isOpen={isClearBindingsConfirmOpen}
