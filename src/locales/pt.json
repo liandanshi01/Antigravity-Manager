@@ -1,5 +1,6 @@
 {
     "common": {
+        "empty": "Vazio",
         "loading": "Carregando...",
         "load_more": "Carregar mais",
         "add": "Adicionar",
@@ -38,6 +39,7 @@
         "dashboard": "Painel",
         "accounts": "Contas",
         "proxy": "Proxy da API",
+        "token_stats": "Estatísticas",
         "call_records": "Registros de Tráfego",
         "settings": "Configurações",
         "theme_to_dark": "Alternar para Modo Escuro",
@@ -162,7 +164,8 @@
             "restored": "Restaurado",
             "deleted": "Excluído",
             "directory_opened": "Diretório de armazenamento aberto",
-            "original_fingerprint_not_found": "Impressão digital original não encontrada"
+            "original_fingerprint_not_found": "Impressão digital original não encontrada",
+            "storage_json_not_found": "storage.json não encontrado, certifique-se de que o Antigravity foi executado para gerar o arquivo de configuração"
         },
         "warmup_all": "Aquecimento com Um Clique",
         "warmup_selected": "Aquecer ({{count}})",
@@ -532,6 +535,11 @@
                 "max_wait": "Tempo Máximo de Espera (seg)",
                 "max_wait_tooltip": "Usado apenas no modo 'Cache Primeiro': aguardar em vez de alternar se o tempo de reset do limite de taxa estiver abaixo deste valor.",
                 "clear_bindings": "Limpar Vinculações de Sessão",
+                "fixed_account": "Modo de Conta Fixa",
+                "fixed_account_tooltip": "Quando ativado, todos os pedidos de API utilizarão apenas a conta selecionada, em vez de alternar entre contas.",
+                "round_robin_set": "Modo round-robin ativado",
+                "fixed_account_set": "Modo de conta fixa ativado",
+                "account_changed": "Conta alterada para: {{email}}",
                 "clear_bindings_tooltip": "Redefinir todas as vinculações sessão-conta, forçando contas a serem reatribuídas na próxima solicitação."
             },
             "experimental": {
@@ -750,6 +758,7 @@
             "request_payload": "Carga da Solicitação",
             "response_payload": "Carga da Resposta",
             "duration": "Duração",
+            "token_stats": "Token Stats",
             "tokens": "Tokens (E/S)",
             "time": "Tempo",
             "model": "Modelo",
@@ -777,5 +786,24 @@
             "stream_error": "Erro na transmissão de stream, por favor tente novamente mais tarde",
             "unknown_error": "Erro desconhecido ocorreu, por favor tente novamente mais tarde"
         }
+    },
+    "token_stats": {
+        "title": "Estatísticas de Token",
+        "hourly": "Por Hora",
+        "daily": "Diário",
+        "weekly": "Semanal",
+        "total_tokens": "Total de Tokens",
+        "input_tokens": "Tokens de Entrada",
+        "output_tokens": "Tokens de Saída",
+        "accounts_used": "Contas Ativas",
+        "usage_trend": "Tendência de Uso",
+        "input": "Entrada",
+        "output": "Saída",
+        "no_data": "Sem Dados",
+        "by_account": "Por Conta",
+        "account_details": "Detalhes da Conta",
+        "account": "Conta",
+        "requests": "Requisições",
+        "total": "Total"
     }
 }

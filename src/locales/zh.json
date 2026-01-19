@@ -1,5 +1,6 @@
 {
     "common": {
+        "empty": "空",
         "loading": "加载中...",
         "load_more": "加载更多",
         "add": "添加",
@@ -39,6 +40,7 @@
         "accounts": "账号管理",
         "proxy": "API 反代",
         "call_records": "流量日志",
+        "token_stats": "统计",
         "settings": "设置",
         "theme_to_dark": "切换到深色模式",
         "theme_to_light": "切换到浅色模式",
@@ -167,7 +169,8 @@
             "restored": "已恢复",
             "deleted": "已删除",
             "directory_opened": "已打开设备存储目录",
-            "original_fingerprint_not_found": "未找到原始指纹"
+            "original_fingerprint_not_found": "未找到原始指纹",
+            "storage_json_not_found": "未找到 storage.json，请确认 Antigravity 已运行过并生成配置文件"
         },
         "warmup_all": "一键预热",
         "warmup_selected": "预热 ({{count}})",
@@ -537,7 +540,12 @@
                 "max_wait": "最大等待时长 (秒)",
                 "max_wait_tooltip": "仅在“缓存优先”模式下生效：如果账号限流重置时间小于此值，则原地等待而非切换账号。",
                 "clear_bindings": "清除会话绑定",
-                "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。"
+                "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。",
+                "fixed_account": "固定账号模式",
+                "fixed_account_tooltip": "启用后，所有 API 请求将仅使用选定的账号，而不是在账号之间轮换。",
+                "round_robin_set": "已切换为轮询模式",
+                "fixed_account_set": "已启用固定账号模式",
+                "account_changed": "账号已切换为: {{email}}"
             },
             "experimental": {
                 "title": "实验性设置 (Experimental)",
@@ -781,5 +789,24 @@
             "stream_error": "数据流传输错误,请稍后重试",
             "unknown_error": "发生未知错误,请稍后重试"
         }
+    },
+    "token_stats": {
+        "title": "Token 消费统计",
+        "hourly": "小时",
+        "daily": "日",
+        "weekly": "周",
+        "total_tokens": "总 Token",
+        "input_tokens": "输入 Token",
+        "output_tokens": "输出 Token",
+        "accounts_used": "活跃账号",
+        "usage_trend": "Token 使用趋势",
+        "input": "输入",
+        "output": "输出",
+        "no_data": "暂无数据",
+        "by_account": "分账号统计",
+        "account_details": "账号详细统计",
+        "account": "账号",
+        "requests": "请求数",
+        "total": "合计"
     }
 }
