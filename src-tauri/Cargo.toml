@@ -1,6 +1,6 @@
 [package]
 name = "antigravity_tools"
-version = "3.3.37"
+version = "3.3.44"
 description = "A Tauri App"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
@@ -38,6 +38,8 @@ tauri-plugin-dialog = "2.4.2"
 tauri-plugin-fs = "2.4.4"
 image = "0.25.9"
 thiserror = "2.0.17"
+libc = "0.2"
+toml_edit = "0.22"
 
 # 反代服务依赖
 axum = { version = "0.7", features = ["multipart"] }
