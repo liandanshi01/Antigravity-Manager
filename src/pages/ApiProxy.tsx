@@ -1603,7 +1603,7 @@ print(response.text)`;
                         <div className="mt-4">
                             <CliSyncCard
                                 proxyUrl={status.base_url}
-                                apiKey={appConfig.proxy.api_key}
+                                apiKey={(appConfig.proxy.api_keys || [])[0] || ''}
                             />
                         </div>
                     )
