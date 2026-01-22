@@ -1,5 +1,6 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Proxy System (v3.3.45)
+# Antigravity Tools 🚀
+> Professional AI Account Management & Proxy System (v3.3.49)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +10,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-3.3.45-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-3.3.49-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -211,6 +212,214 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v3.3.49 (2026-01-22)**:
+        -   **[Core Fix] Thinking Interruption & 0-Token Defense (Fix Thinking Interruption)**:
+            -   **Issue**: Addressed an issue where Gemini models would unexpectedly terminate the stream after outputting "Thinking" content, causing Claude clients to receive 0-token responses and deadlock with errors.
+            -   **Defense Mechanism**:
+                - **State Tracking**: Real-time monitoring of streaming responses to detect "Thinking-only" states (Thinking sent, Content pending).
+                - **Auto-Recovery**: Upon detecting such interruptions, the system automatically closes the Thinking block, injects a system notice, and simulates valid Usage data to ensure the client terminates the session gracefully.
+        -   **[Core Fix] Removed Flash Lite Model to Fix 429 Errors**:
+            -   **Issue**: Observed that `gemini-2.5-flash-lite` is frequently returning 429 errors today due to **Upstream Google Container Capacity Exhausted** (MODEL_CAPACITY_EXHAUSTED), rather than standard account quota limits.
+            -   **Urgent Fix**: Replaced all internal `gemini-2.5-flash-lite` calls (e.g., background title generation, L3 summary compression) and preset mappings with the more stable `gemini-2.5-flash`.
+            -   **User Notice**: If you explicitly used `gemini-2.5-flash-lite` in "Custom Mappings" or "Presets", please update it to another model immediately, or you may continue to experience 429 errors.
+        -   **[UX Optimization] Immediate Effect of Settings (Fix PR #949)**:
+            -   **Instant Apply**: Fixed an issue where language changes required manual saving. Adjustments now apply immediately across the UI.
+        -   **[Code Cleanup] Backend Architecture Refactoring & Optimization (PR #950)**:
+            -   **Streamlining**: Deeply refactored mapping and handling logic within the proxy layer. Removed redundant modules (e.g., `openai/collector.rs`) to significantly improve maintainability.
+            -   **Stability Boost**: Optimized the conversion chains for OpenAI and Claude protocols, unified image configuration parsing, and hardened the context manager's robustness.
+        -   **[Core Fix] State Sync Strategy Update**:
+            -   **Consistency**: Improved the immediate application logic for themes and resolved conflicts between `App.tsx` and `Settings.tsx`, ensuring UI consistency during configuration loading.
+        -   **[Core Optimization] Context Compression & Token Savings**:
+            -   **Early Compression**: Since Claude CLI sends large chunks of history when resuming, compression thresholds are now configurable with lower defaults.
+            -   **L3 Pivot**: The L3 summary reset threshold has been lowered from 90% to 70%, triggering compression earlier to prevent massive token usage.
+            -   **UI Enhancement**: Added L1/L2/L3 compression threshold sliders in Experimental Settings for dynamic user customization.
+        -   **[Enhancement] API Monitor Dashboard Upgrade (PR #951)**:
+            -   **Account Filtering**: Added the ability to filter traffic logs by account, allowing for precise tracking of specific account usage in high-volume environments.
+            -   **Deep Detail Enhancement**: The monitor details page now displays critical metadata including request protocol (OpenAI/Anthropic/Gemini), account used, and mapped physical models.
+            -   **UI & i18n**: Optimized the layout of monitor details and completed translations for all 8 supported languages.
+        -   **[JSON Schema Optimization] Recursive $defs Collection & Improved Fallback (PR #953)**:
+            -   **Recursive Collection**: Added `collect_all_defs()` to gathered `$defs`/`definitions` from all schema levels, fixing missing nested definitions.
+            -   **Ref Flattening**: Always run `flatten_refs()` to catch and handle orphan `$ref` fields.
+            -   **Fallback Method**: Added fallback for unresolved `$ref`, converting them to string type with descriptive hints.
+            -   **Robustness**: Added new test cases for nested defs and unresolved refs to ensure schema processing stability.
+        -   **[Core Fix] Account Index Protection (Fix Issue #929)**:
+            -   **Security Hardening**: Removed automatic deletion logic on load failure, preventing accidental loss of account indexes during environment anomalies or upgrades.
+        -   **[Feature] Deep Optimization of Router & Model Mapping (PR #954)**:
+            -   **Deterministic Router Priority**: Resolved non-deterministic matching issues for multi-wildcard patterns by implementing a priority system based on pattern specificity.
+
+        -   **[Stability] OAuth Callback & Parsing Enhancement (Fix #931, #850, #778)**:
+            -   **Robust Parsing**: Optimized the local callback server's URL parsing logic to improve compatibility across different browsers.
+            -   **Detailed Logging**: Added raw request logging for authorization failures, enabling quicker debugging of network-level interceptions.
+        -   **[Optimization] OAuth Communication Quality (Issue #948, #887)**:
+            -   **Timeout Extension**: Increased auth request timeouts to 60 seconds to significantly improve token exchange success rates in proxy environments.
+            -   **Error Guidance**: Provided clear guidance for Google API connectivity issues, helping users troubleshoot proxy settings.
+
+    *   **v3.3.48 (2026-01-21)**:
+        -   **[Core Fix] Windows Console Flashing Fix (Fix PR #933)**:
+            -   **Problem**: On Windows, launching the application or executing background CLI commands would sometimes cause a command prompt window to briefly flash, disrupting the user experience.
+            -   **Fix**: Added the `CREATE_NO_WINDOW` flag to the `cloudflared` process creation logic, ensuring all background processes run silently without visible windows.
+            -   **Impact**: Resolved the window flashing issue for Windows users during app startup or CLI interactions.
+    *   **v3.3.47 (2026-01-21)**:
+        -   **[Core Fix] Image Generation API Parameter Mapping Enhancement (Fix Issue #911)**:
+            -   **Background**: The `/v1/images/generations` endpoint had two parameter mapping defects:
+                - The `size` parameter only supported hardcoded specific dimension strings; OpenAI standard sizes (like `1280x720`) were incorrectly fallback to `1:1` aspect ratio
+                - The `quality` parameter was only used for Prompt enhancement and not mapped to Gemini's `imageSize`, unable to control the physical resolution of output images
+            -   **Fix Details**:
+                - **Extended `common_utils.rs`**: Added `parse_image_config_with_params` function to support parsing image configuration from OpenAI parameters (`size`, `quality`)
+                - **Dynamic Aspect Ratio Calculation**: Added `calculate_aspect_ratio_from_size` function, using mathematical calculation instead of hardcoded matching, supporting any `WIDTHxHEIGHT` format
+                - **Unified Configuration Parsing**: Modified `handle_images_generations` function, removed hardcoded mapping, calling unified configuration parsing function
+                - **Parameter Mapping**: `quality: "hd"` → `imageSize: "4K"`, `quality: "medium"` → `imageSize: "2K"`
+            -   **Test Verification**: Added 8 unit tests covering OpenAI parameter parsing, dynamic calculation, backward compatibility scenarios, all passing
+            -   **Compatibility Guarantee**:
+                - ✅ Backward Compatible: Chat path (like `gemini-3-pro-image-16-9-4k`) still works normally
+                - ✅ Progressive Enhancement: Supports more OpenAI standard sizes, `quality` parameter correctly mapped
+                - ✅ No Breaking Changes: Claude, Vertex, Gemini protocols unaffected
+            -   **Impact**: Resolved OpenAI Images API parameter mapping issues, all protocols automatically benefit through `common_utils`
+        -   **[Core Optimization] 3-Layer Progressive Context Compression**:
+            -   **Background**: Long conversations frequently trigger "Prompt is too long" errors, manual `/compact` is tedious, and existing compression strategies break LLM's KV Cache, causing cost spikes
+            -   **Solution - Multi-Layer Progressive Compression Strategy**:
+                - **Layer 1 (60% pressure)**: Intelligent Tool Message Trimming
+                    - Removes old tool call/result messages, retains last 5 rounds of interaction
+                    - **Completely preserves KV Cache** (only deletes messages, doesn't modify content)
+                    - Compression rate: 60-90%
+                - **Layer 2 (75% pressure)**: Thinking Content Compression + Signature Preservation
+                    - Compresses Thinking block text content in `assistant` messages (replaces with "...")
+                    - **Fully preserves `signature` field**, resolves Issue #902 (signature loss causing 400 errors)
+                    - Protects last 4 messages from compression
+                    - Compression rate: 70-95%
+                - **Layer 3 (90% pressure)**: Fork Session + XML Summary
+                    - Uses `gemini-2.5-flash-lite` to generate 8-section XML structured summary (extremely low cost)
+                    - Extracts and preserves last valid Thinking signature
+                    - Creates new message sequence: `[User: XML Summary] + [Assistant: Confirmation] + [User's Latest Message]`
+                    - **Completely preserves Prompt Cache** (prefix stable, append-only)
+                    - Compression rate: 86-97%
+            -   **Technical Implementation**:
+                - **New Module**: `context_manager.rs` implements Token estimation, tool trimming, Thinking compression, signature extraction
+                - **Helper Function**: `call_gemini_sync()` - reusable synchronous upstream call function
+                - **XML Summary Template**: 8-section structured summary (goal, tech stack, file state, code changes, debugging history, plan, preferences, signature)
+                - **Progressive Triggering**: Auto-triggers by pressure level, re-estimates Token usage after each compression
+            -   **Cost Optimization**:
+                - Layer 1: Zero cost (doesn't break cache)
+                - Layer 2: Low cost (only breaks partial cache)
+                - Layer 3: Minimal cost (summary uses flash-lite, new session is fully cache-friendly)
+                - **Total Savings**: 86-97% Token cost while maintaining signature chain integrity
+            -   **User Experience**:
+                - Automated: No manual `/compact` needed, system handles automatically
+                - Transparent: Detailed logs record each layer's trigger and effect
+                - Fault-tolerant: Layer 3 returns friendly error on failure
+            -   **Impact**: Completely resolves context management issues in long conversations, significantly reduces API costs, ensures tool call chain integrity
+        -   **[Core Optimization] Context Estimation and Scaling Algorithm Enhancement (PR #925)**:
+            -   **Background**: In long conversation scenarios like Claude Code, the fixed Token estimation algorithm (3.5 chars/token) has huge errors in mixed Chinese-English content, causing the 3-layer compression logic to fail to trigger in time, ultimately still reporting "Prompt is too long" errors
+            -   **Solution - Dynamic Calibration + Multi-language Awareness**:
+                - **Multi-language Aware Estimation**:
+                    - **ASCII/English**: ~4 chars/Token (optimized for code and English docs)
+                    - **Unicode/CJK (Chinese/Japanese/Korean)**: ~1.5 chars/Token (optimized for Gemini/Claude tokenization)
+                    - **Safety Margin**: Additional 15% safety buffer on top of calculated results
+                - **Dynamic Calibrator (`estimation_calibrator.rs`)**:
+                    - **Self-learning Mechanism**: Records "Estimated Token Count" vs Google API's "Actual Token Count" for each request
+                    - **Calibration Factor**: Uses Exponential Moving Average (EMA, 60% old ratio + 40% new ratio) to maintain calibration coefficient
+                    - **Conservative Initialization**: Initial calibration coefficient is 2.0, ensuring extremely conservative compression triggering in early system operation
+                    - **Auto-convergence**: Automatically corrects based on actual data, making estimates increasingly accurate
+                - **Integration with 3-Layer Compression Framework**:
+                    - Uses calibrated Token counts in all estimation stages (initial estimation, re-estimation after Layer 1/2/3)
+                    - Records detailed calibration factor logs after each compression layer for debugging and monitoring
+            -   **Technical Implementation**:
+                - **New Module**: `estimation_calibrator.rs` - Global singleton calibrator, thread-safe
+                - **Modified Files**: `claude.rs`, `streaming.rs`, `context_manager.rs`
+                - **Calibration Data Flow**: Streaming response collector → Extract actual Token count → Update calibrator → Next request uses new coefficient
+            -   **User Experience**:
+                - **Transparency**: Logs show raw estimate, calibrated estimate, and calibration factor for understanding system behavior
+                - **Adaptive**: System automatically adjusts based on user's actual usage patterns (Chinese-English ratio, code volume, etc.)
+                - **Precise Triggering**: Compression logic based on more accurate estimates, significantly reducing "false negatives" and "false positives"
+            -   **Impact**: Significantly improves context management precision, resolves automatic compression failure issues reported in Issue #902 and #867, ensures long conversation stability
+        -   **[Critical Fix] Thinking Signature Recovery Logic Optimization**:
+            -   **Background**: In retry scenarios, signature check logic didn't check Session Cache, causing incorrect Thinking mode disabling, resulting in 0 token requests and response failures
+            -   **Symptoms**:
+                - Retry shows "No valid signature found for function calls. Disabling thinking"
+                - Traffic logs show `I: 0, O: 0` (actual request succeeded but tokens not recorded)
+                - Client may not receive response content
+            -   **Fix Details**:
+                - **Extended Signature Check Scope**: `has_valid_signature_for_function_calls()` now checks Session Cache
+                - **Check Priority**: Global Store → **Session Cache (NEW)** → Message History
+                - **Detailed Logging**: Added signature source tracking logs for debugging
+            -   **Technical Implementation**:
+                - Modified signature validation logic in `request.rs`
+                - Added `session_id` parameter passing to signature check function
+                - Added `[Signature-Check]` log series for tracking signature recovery process
+            -   **Impact**: Completely resolves Thinking mode degradation in retry scenarios, ensures Token statistics accuracy, improves long session stability
+        -   **[Core Fix] Universal Parameter Alignment Engine**:
+            -   **Background**: Completely resolves `400 Bad Request` errors from the Gemini API caused by parameter type mismatches (e.g., string instead of number) during Tool Use.
+            -   **Fix Details**:
+                - **Implementation**: Developed `fix_tool_call_args` in `json_schema.rs` to automatically coerce parameter types (strings to numbers/booleans) based on their JSON Schema definitions.
+                - **Protocol Refactoring**: Refactored both OpenAI and Claude protocol layers to use the unified alignment engine, eliminating scattered hardcoded logic.
+            -   **Resolved Issues**: Fixed failures in tools like `local_shell_call` and `apply_patch` when parameters were incorrectly formatted as strings by certain clients or proxy layers.
+            -   **Impact**: Significantly improves the stability of tool calls and reduces upstream API 400 errors.
+        -   **[Enhancement] Image Model Quota Protection Support (Fix Issue #912)**:
+            -   **Background**: Users reported that the image generation model (G3 Image) lacked quota protection, causing accounts with exhausted quotas to still be used for image requests
+            -   **Fix Details**:
+                - **Backend Configuration**: Added `gemini-3-pro-image` to `default_monitored_models()` in `config.rs`, aligning with Smart Warmup and Pinned Quota Models lists
+                - **Frontend UI**: Added image model option in `QuotaProtection.tsx`, adjusted layout to 4 models per row (consistent with Smart Warmup)
+            -   **Impact**: 
+                - ✅ Backward Compatible: Existing configurations unaffected; new users or config resets will automatically include the image model
+                - ✅ Complete Protection: All 4 core models (Gemini 3 Flash, Gemini 3 Pro High, Claude 4.5 Sonnet, Gemini 3 Pro Image) are now monitored by quota protection
+                - ✅ Auto-trigger: When image model quota falls below threshold, accounts are automatically added to the protection list, preventing further consumption
+        -   **[Transport Layer Optimization] Streaming Response Anti-Buffering**:
+            -   **Background**: When deployed behind reverse proxies like Nginx, streaming responses may be buffered by the proxy, increasing client-side latency
+            -   **Fix Details**:
+                - **Added X-Accel-Buffering Header**: Injected `X-Accel-Buffering: no` header in all streaming responses
+                - **Multi-Protocol Coverage**: Claude (`/v1/messages`), OpenAI (`/v1/chat/completions`), and Gemini native protocol all supported
+            -   **Technical Details**:
+                - Modified files: `claude.rs:L877`, `openai.rs:L314`, `gemini.rs:L240`
+                - This header instructs Nginx and other reverse proxies not to buffer streaming responses, passing them directly to clients
+            -   **Impact**: Significantly reduces streaming response latency in reverse proxy scenarios, improving user experience
+        -   **[Error Recovery Enhancement] Multi-Protocol Signature Error Recovery Prompts**:
+            -   **Background**: When signature errors occur in Thinking mode, merely removing signatures may cause the model to generate empty responses or simple "OK" replies
+            -   **Fix Details**:
+                - **Claude Protocol Enhancement**: Added repair prompts to existing signature error retry logic, guiding the model to regenerate complete responses
+                - **OpenAI Protocol Implementation**: Added 400 signature error detection and repair prompt injection logic
+                - **Gemini Protocol Implementation**: Added 400 signature error detection and repair prompt injection logic
+            -   **Repair Prompt**:
+                ```
+                [System Recovery] Your previous output contained an invalid signature. 
+                Please regenerate the response without the corrupted signature block.
+                ```
+            -   **Technical Details**:
+                - Claude: `claude.rs:L1012-1030` - Enhanced existing logic, supports String and Array message formats
+                - OpenAI: `openai.rs:L391-427` - Complete implementation, uses `OpenAIContentBlock::Text` type
+                - Gemini: `gemini.rs:L17, L299-329` - Modified function signature to support mutable body, injects repair prompts
+            -   **Impact**: 
+                - ✅ Improved error recovery success rate: Model receives clear instructions, avoiding meaningless responses
+                - ✅ Multi-protocol consistency: All 3 protocols have the same error recovery capability
+                - ✅ Better user experience: Reduces conversation interruptions caused by signature errors
+    *   **v3.3.46 (2026-01-20)**:
+        -   **[Enhancement] Deep Optimization & i18n Standardization for Token Stats (PR #892)**:
+            -   **Unified UI/UX**: Implemented custom Tooltip components to unify hover styles across Area, Bar, and Pie charts, enhancing contrast and readability in Dark Mode.
+            -   **Visual Refinements**: Optimized chart cursors and grid lines, removing redundant hover overlays for a cleaner, more professional interface.
+            -   **Adaptive Layout**: Improved Flexbox layout for chart containers, ensuring they fill available vertical space across various window sizes and eliminating empty gaps.
+            -   **Per-Account Trend Statistics**: Added a "By Account" view mode, enabling intuitive analysis of token consumption shares and activity levels via pie and trend charts.
+            -   **i18n Standardization**: Completely resolved duplicate key warnings in `ja.json`, `zh-TW.json`, `vi.json`, `ru.json`, and `tr.json`. Added missing translations for `account_trend`, `by_model`, etc., ensuring consistent UI presentation across all 8 supported languages.
+        -   **[Core Fix] Remove [DONE] from Stop Sequences to Prevent Truncation (PR #889)**:
+            -   **Background**: `[DONE]` is a standard SSE (Server-Sent Events) protocol end signal that frequently appears in code and documentation. Including it as a `stopSequence` caused unexpected output truncation when the model explained SSE-related content.
+            -   **Fix Details**: Removed the `"[DONE]"` marker from the Gemini request's `stopSequences` array.
+            -   **Technical Notes**:
+                - Gemini stream termination is controlled by the `finishReason` field, not `stopSequence`
+                - SSE-level `"data: [DONE]"` is handled separately in `mod.rs`
+            -   **Impact**: Resolved the issue where model output was prematurely terminated when generating content containing SSE protocol explanations, code examples, etc. (Issue #888).
+        -   **[Deployment] Docker Build Dual-Mode Adaptation (Default/China Mode)**:
+            -   **Dual-Mode Architecture**: Introduced `ARG USE_CHINA_MIRROR` build argument. The default mode keeps the original Debian official sources (ideal for overseas/cloud builds); when enabled, it automatically switches to Tsinghua University (TUNA) mirrors (optimized for mainland China).
+            -   **Flexibility Boost**: Completely resolved slow builds in overseas environments caused by hardcoded mirrors, while preserving acceleration for users in China.
+        -   **[Stability] VNC & Container Startup Logic Hardening (PR #881)**:
+            -   **Zombie Process Cleanup**: Optimized cleanup logic in `start.sh` using `pkill` to precisely terminate Xtigervnc and websockify processes and clean up `/tmp/.X11-unix` lock files, resolving various VNC connection issues after restarts.
+            -   **Healthcheck Upgrade**: Expanded Healthcheck to include websockify and the main application, ensuring container status more accurately reflects service availability.
+            -   **Major Fix**: Resolved OpenAI protocol 404 errors and fixed a compatibility defect where Codex (`/v1/responses`) with complex object array `input` or custom tools like `apply_patch` (missing schema) caused upstream 400 (`INVALID_ARGUMENT`) errors.
+            -   **Thinking Model Optimization**: Resolved mandatory error issues with Claude 3.7 Thinking models when thought chains are missing in historical messages, implementing intelligent protocol fallback and placeholder block injection.
+            -   **Protocol Completion**: Enhanced OpenAI Legacy endpoints with Token usage statistics and Header injection. Added support for `input_text` content blocks and mapped the `developer` role to system instructions.
+            -   **requestId Unification**: Unified `requestId` prefix to `agent-` across all OpenAI paths to resolve ID recognition issues with some clients. interface response bodies, resolving the issue where token consumption was not displayed in traffic logs.
+        -   **[Core Fix] JSON Schema Array Recursive Cleaning Fix (Resolution of Gemini API 400 Errors)**:
+            -   **Issue**: Complex nested array schemas in tool definitions (like `apply_patch` or `local_shell_call`) were not being recursively cleaned, leading to 400 errors from Gemini API due to unsupported fields like `const` or `propertyNames`.
+            -   **Fix**: Implemented full recursive cleaning for all `Value::Array` types in the JSON Schema processor.
+            -   **Impact**: Significantly improves compatibility with tools that use complex array schemas.
+
     *   **v3.3.45 (2026-01-19)**:
         - **[Core] Critical Fix for Claude/Gemini SSE Interruptions & 0-Token Responses (Issue #859)**:
             - **Enhanced Peek Logic**: The proxy now loops through initial SSE chunks to filter out heartbeat pings and empty data, ensuring a valid content block is received before committing to a 200 OK response.
@@ -1035,6 +1244,18 @@ print(response.choices[0].message.content)
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
 
 Special thanks to all developers who have contributed to this project.
+
+## 🤝 Special Thanks
+
+This project has referenced or learned from the ideas or code of the following excellent open-source projects during its development (in no particular order):
+
+*   [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)
+*   [Practical-Guide-to-Context-Engineering](https://github.com/WakeUp-Jin/Practical-Guide-to-Context-Engineering)
+*   [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+*   [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy)
+*   [aistudio-gemini-proxy](https://github.com/zhongruichen/aistudio-gemini-proxy)
+*   [gcli2api](https://github.com/su-kaka/gcli2api)
+
 *   **License**: **CC BY-NC-SA 4.0**. Strictly for non-commercial use.
 *   **Security**: All account data is encrypted and stored locally in a SQLite database. Data never leaves your device unless sync is enabled.
 

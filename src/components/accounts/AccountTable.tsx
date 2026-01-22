@@ -411,7 +411,7 @@ function AccountRowContent({
                                         />
                                     )}
                                     <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none">
-                                        <span className="w-[54px] text-gray-500 dark:text-gray-400 font-bold truncate pr-1" title={modelId}>
+                                        <span className="min-w-[54px] max-w-[72px] text-gray-500 dark:text-gray-400 font-bold truncate pr-1" title={modelId}>
                                             {modelConfig.label}
                                         </span>
                                         <div className="flex-1 flex justify-center">

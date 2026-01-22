@@ -68,6 +68,9 @@ export interface PinnedQuotaModelsConfig {
 
 export interface ExperimentalConfig {
     enable_usage_scaling: boolean;
+    context_compression_threshold_l1?: number;
+    context_compression_threshold_l2?: number;
+    context_compression_threshold_l3?: number;
 }
 
 export interface AppConfig {
@@ -88,5 +91,27 @@ export interface AppConfig {
     quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表
     proxy: ProxyConfig;
+}
+
+// ============================================================================
+// Cloudflared (CF隧道) 类型定义
+// ============================================================================
+
+export type TunnelMode = 'quick' | 'auth';
+
+export interface CloudflaredConfig {
+    enabled: boolean;
+    mode: TunnelMode;
+    port: number;
+    token?: string;
+    use_http2: boolean;
+}
+
+export interface CloudflaredStatus {
+    installed: boolean;
+    version?: string;
+    running: boolean;
+    url?: string;
+    error?: string;
 }
 

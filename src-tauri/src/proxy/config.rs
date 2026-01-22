@@ -135,6 +135,18 @@ pub struct ExperimentalConfig {
     /// 用于解决客户端因 Gemini 上下文过大而错误触发压缩的问题
     #[serde(default = "default_true")]
     pub enable_usage_scaling: bool,
+
+    /// 上下文压缩阈值 L1 (Tool Trimming)
+    #[serde(default = "default_threshold_l1")]
+    pub context_compression_threshold_l1: f32,
+
+    /// 上下文压缩阈值 L2 (Thinking Compression)
+    #[serde(default = "default_threshold_l2")]
+    pub context_compression_threshold_l2: f32,
+
+    /// 上下文压缩阈值 L3 (Fork + Summary)
+    #[serde(default = "default_threshold_l3")]
+    pub context_compression_threshold_l3: f32,
 }
 
 impl Default for ExperimentalConfig {
@@ -144,9 +156,16 @@ impl Default for ExperimentalConfig {
             enable_tool_loop_recovery: true,
             enable_cross_model_checks: true,
             enable_usage_scaling: true,
+            context_compression_threshold_l1: 0.4,
+            context_compression_threshold_l2: 0.55,
+            context_compression_threshold_l3: 0.7,
         }
     }
 }
+
+fn default_threshold_l1() -> f32 { 0.4 }
+fn default_threshold_l2() -> f32 { 0.55 }
+fn default_threshold_l3() -> f32 { 0.7 }
 
 fn default_true() -> bool {
     true
@@ -231,7 +250,7 @@ impl Default for ProxyConfig {
             auto_start: false,
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
-            enable_logging: false, // 默认关闭，节省性能
+            enable_logging: true, // 默认开启，支持 token 统计功能
             upstream_proxy: UpstreamProxyConfig::default(),
             zai: ZaiConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),

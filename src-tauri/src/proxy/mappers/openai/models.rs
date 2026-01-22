@@ -30,6 +30,11 @@ pub struct OpenAIRequest {
     // Codex proprietary fields
     pub instructions: Option<String>,
     pub input: Option<Value>,
+    // [NEW] Image generation parameters (for Chat API compatibility)
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub quality: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,18 +52,12 @@ pub enum OpenAIContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum OpenAIContentBlock {
-    #[serde(rename = "text")]
-    Text {
-        text: String,
-    },
+    #[serde(rename = "text", alias = "input_text")]
+    Text { text: String },
     #[serde(rename = "image_url")]
-    ImageUrl {
-        image_url: OpenAIImageUrl,
-    },
+    ImageUrl { image_url: OpenAIImageUrl },
     #[serde(rename = "audio_url")]
-    AudioUrl {
-        audio_url: AudioUrlContent,
-    },
+    AudioUrl { audio_url: AudioUrlContent },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

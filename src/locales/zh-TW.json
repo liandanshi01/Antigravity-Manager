@@ -538,15 +538,58 @@
                 "clear_bindings_tooltip": "立即斷開所有會話與帳號的繫結關係，強制下一次請求重新分配帳號。",
                 "fixed_account": "固定帳戶模式",
                 "fixed_account_tooltip": "啟用後，所有 API 請求將只使用所選帳戶，而不會在帳戶之間輪換。",
-                "round_robin_set": "輪詢模式已啟用",
-                "fixed_account_set": "固定帳戶模式已啟用",
-                "account_changed": "帳戶已變更為：{{email}}"
+                "round_robin_set": "輪詢模式已啟用"
             },
             "experimental": {
                 "title": "實驗性設定 (Experimental)",
                 "title_tooltip": "探索性功能，可能在未來版本中調整或移除。",
                 "enable_usage_scaling": "啟用用量縮放",
-                "enable_usage_scaling_tooltip": "針對 Claude 相容協定。當總輸入超過 30k Token 時開啟激進縮放，防止在大上下文下頻繁觸發用戶端壓縮。注意：開啟後用戶端顯示的用量不再代表實際計費點數。"
+                "enable_usage_scaling_tooltip": "針對 Claude 協定。當總輸入超過 30k Token 時開啟激進縮放，防止在大上下文下頻繁觸發用戶端壓縮。注意：開啟後用戶端顯示的用量不再代表實際計費點數。"
+            },
+            "cloudflared": {
+                "title": "公網訪問 (Cloudflared)",
+                "subtitle": "透過 Cloudflare Tunnel 將本地服務暴露到網際網路",
+                "not_installed": "Cloudflared 未安裝",
+                "install_hint": "Cloudflared 是 Cloudflare 提供的免費隧道工具，可將本地代理暴露到網際網路，無需公網 IP 或埠轉發。點擊下方按鈕安裝。",
+                "install": "立即安裝",
+                "installing": "安裝中...",
+                "install_success": "Cloudflared 安裝成功",
+                "install_failed": "安裝失敗: {{error}}",
+                "installed": "已安裝",
+                "version": "版本",
+                "mode_label": "隧道模式",
+                "mode_quick": "快速隧道",
+                "mode_quick_desc": "自動生成臨時 URL (*.trycloudflare.com)，無需帳號，重啟後 URL 會變更",
+                "mode_auth": "命名隧道",
+                "mode_auth_desc": "使用 Cloudflare 帳號令牌，支援自訂網域，永久 URL",
+                "token": "隧道令牌",
+                "token_placeholder": "在此貼上您的 Cloudflare Tunnel Token",
+                "token_hint": "從 Cloudflare Zero Trust 控制台取得",
+                "token_required": "命名隧道模式需要令牌",
+                "use_http2": "使用 HTTP/2",
+                "use_http2_desc": "相容性更好，建議中國大陸使用",
+                "status_label": "隧道狀態",
+                "status_stopped": "已停止",
+                "status_starting": "啟動中...",
+                "status_running": "執行中",
+                "status_error": "錯誤",
+                "public_url": "公網 URL",
+                "public_url_copied": "已複製 URL",
+                "start_tunnel": "啟動隧道",
+                "stop_tunnel": "停止隧道",
+                "restart_tunnel": "重啟隧道",
+                "starting": "啟動中...",
+                "stopping": "停止中...",
+                "start_success": "隧道已成功啟動",
+                "stop_success": "隧道已停止",
+                "start_failed": "隧道啟動失敗: {{error}}",
+                "stop_failed": "隧道停止失敗: {{error}}",
+                "logs": "日誌",
+                "clear_logs": "清除日誌",
+                "auto_start": "隨代理自動啟動",
+                "auto_start_desc": "API 代理服務啟動時自動啟動隧道",
+                "warning_quick_mode": "⚠️ 快速模式: URL 會在每次重啟時變更",
+                "warning_token_storage": "💡 令牌會安全地儲存在本地"
             }
         },
         "example": {
@@ -739,7 +782,9 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "繪圖",
-            "reset": "重置"
+            "reset": "重置",
+            "by_account": "按帳號篩選",
+            "all_accounts": "全部帳號"
         },
         "table": {
             "status": "狀態",
@@ -777,32 +822,31 @@
         "message": "新版本已準備就緒，包含多項最佳化與改進。當前版本: v{{current}}",
         "action": "立即更新"
     },
-    "errors": {
-        "stream": {
-            "timeout_error": "請求逾時,請檢查網路連線",
-            "connection_error": "無法連線到伺服器,請檢查網路或代理設定",
-            "decode_error": "網路連線不穩定,資料傳輸中斷。建議: 1) 檢查網路連線 2) 更換代理節點 3) 稍後重試",
-            "stream_error": "資料流傳輸錯誤,請稍後重試",
-            "unknown_error": "發生未知錯誤,請稍後重試"
-        }
-    },
     "token_stats": {
         "title": "Token 消費統計",
-        "hourly": "小時",
-        "daily": "日",
-        "weekly": "週",
+        "hourly": "每小時",
+        "daily": "每日",
+        "weekly": "每週",
         "total_tokens": "總 Token",
         "input_tokens": "輸入 Token",
         "output_tokens": "輸出 Token",
         "accounts_used": "活躍帳號",
+        "models_used": "使用模型",
+        "model_trend": "分模型使用趨勢",
+        "account_trend": "分帳號使用趨勢",
         "usage_trend": "Token 使用趨勢",
-        "input": "輸入",
-        "output": "輸出",
-        "no_data": "暫無數據",
         "by_account": "分帳號統計",
+        "by_model": "按模型",
+        "by_account_view": "按帳號",
+        "model_details": "分模型詳細統計",
         "account_details": "帳號詳細統計",
+        "model": "模型",
         "account": "帳號",
         "requests": "請求數",
-        "total": "合計"
+        "input": "輸入",
+        "output": "輸出",
+        "total": "合計",
+        "percentage": "佔比",
+        "no_data": "暫無資料"
     }
 }

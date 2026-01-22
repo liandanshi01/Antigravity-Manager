@@ -1,6 +1,5 @@
 {
     "common": {
-        "empty": "Empty",
         "loading": "Loading...",
         "load_more": "Load More",
         "add": "Add",
@@ -40,7 +39,7 @@
         "accounts": "Accounts",
         "proxy": "API Proxy",
         "call_records": "Traffic Logs",
-        "token_stats": "Statistics",
+        "token_stats": "Token Stats",
         "settings": "Settings",
         "theme_to_dark": "Switch to Dark Mode",
         "theme_to_light": "Switch to Light Mode",
@@ -169,8 +168,7 @@
             "restored": "Restored",
             "deleted": "Deleted",
             "directory_opened": "Storage directory opened",
-            "original_fingerprint_not_found": "Original fingerprint not found",
-            "storage_json_not_found": "storage.json not found, please ensure Antigravity has been run to generate the config file"
+            "original_fingerprint_not_found": "Original fingerprint not found"
         },
         "warmup_all": "One-click Warmup",
         "warmup_selected": "Warmup ({{count}})",
@@ -540,19 +538,64 @@
                 "max_wait": "Max Wait (sec)",
                 "max_wait_tooltip": "Only used in 'Cache First' mode: wait instead of switching if the rate limit reset time is below this value.",
                 "clear_bindings": "Clear Session Bindings",
-                "clear_bindings_tooltip": "Hard reset all session-account bindings, forcing accounts to be re-assigned on next request.",
-                "fixed_account": "Fixed Account Mode",
-                "fixed_account_tooltip": "When enabled, all API requests will use only the selected account instead of rotating between accounts.",
-                "round_robin_set": "Round-robin mode enabled",
-                "fixed_account_set": "Fixed account mode enabled",
-                "account_changed": "Account changed to: {{email}}"
+                "clear_bindings_tooltip": "Hard reset all session-account bindings, forcing accounts to be re-assigned on next request."
             },
             "experimental": {
                 "title": "Experimental Settings",
                 "title_tooltip": "Exploratory features that may be adjusted or removed in future versions.",
                 "enable_usage_scaling": "Enable Usage Scaling",
-                "enable_usage_scaling_tooltip": "For Claude protocol. Enables aggressive scaling when total input exceeds 30k tokens to prevent frequent client-side compression. Note: Reported usage will not reflect actual billing after enabling."
+                "enable_usage_scaling_tooltip": "For Claude protocol. Enables aggressive scaling when total input exceeds 30k tokens to prevent frequent client-side compression. Note: Reported usage will not reflect actual billing after enabling.",
+                "context_compression_threshold_l1": "L1 Compression Threshold (Tool Trimming)",
+                "context_compression_threshold_l1_tooltip": "Trims old tool call records to save space. Recommended: 0.4 (40%)",
+                "context_compression_threshold_l2": "L2 Compression Threshold (Thinking Compression)",
+                "context_compression_threshold_l2_tooltip": "Compresses early thinking blocks while preserving signatures. Recommended: 0.55 (55%)",
+                "context_compression_threshold_l3": "L3 Compression Threshold (Summary Pivot)",
+                "context_compression_threshold_l3_tooltip": "Ultimate reset: generates an XML state summary and pivots to a fresh session. Most token-efficient. Recommended: 0.7 (70%)"
             }
+        },
+        "cloudflared": {
+            "title": "Public Access (Cloudflared)",
+            "subtitle": "Expose your local service to the internet via Cloudflare Tunnel",
+            "not_installed": "Cloudflared not installed",
+            "install_hint": "Cloudflared is a free tunnel tool from Cloudflare. It exposes your local proxy to the internet without a public IP or port forwarding. Click the button below to install.",
+            "install": "Install Now",
+            "installing": "Installing...",
+            "install_success": "Cloudflared installed successfully",
+            "install_failed": "Installation failed: {{error}}",
+            "installed": "Installed",
+            "version": "Version",
+            "mode_label": "Tunnel Mode",
+            "mode_quick": "Quick Tunnel",
+            "mode_quick_desc": "Auto-generated temporary URL (*.trycloudflare.com), no account needed, URL changes on restart",
+            "mode_auth": "Named Tunnel",
+            "mode_auth_desc": "Use Cloudflare account token, supports custom domain, persistent URL",
+            "token": "Tunnel Token",
+            "token_placeholder": "Paste your Cloudflare Tunnel Token here",
+            "token_hint": "Get from Cloudflare Zero Trust dashboard",
+            "token_required": "Token is required for Named Tunnel mode",
+            "use_http2": "Use HTTP/2",
+            "use_http2_desc": "More compatible, recommended for China mainland",
+            "status_label": "Tunnel Status",
+            "status_stopped": "Stopped",
+            "status_starting": "Starting...",
+            "status_running": "Running",
+            "status_stopping": "Stopping...",
+            "status_error": "Error",
+            "public_url": "Public URL",
+            "public_url_placeholder": "Public URL will appear here after tunnel starts",
+            "copy_url": "Copy URL",
+            "url_copied": "URL copied",
+            "start_tunnel": "Start Tunnel",
+            "stop_tunnel": "Stop Tunnel",
+            "running": "Tunnel Running",
+            "started": "Tunnel started",
+            "stopped": "Tunnel stopped",
+            "start_failed": "Start failed: {{error}}",
+            "stop_failed": "Stop failed: {{error}}",
+            "require_proxy_running": "Please start the local proxy service first",
+            "connection_info": "Connection Info",
+            "local_port": "Local Port",
+            "tunnel_protocol": "Tunnel Protocol"
         },
         "example": {
             "title": "Usage Examples",
@@ -743,7 +786,9 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "Images",
-            "reset": "Reset"
+            "reset": "Reset",
+            "by_account": "Filter by account",
+            "all_accounts": "All Accounts"
         },
         "table": {
             "status": "Status",
@@ -781,6 +826,33 @@
         "message": "A new version is ready with optimizations and improvements. Current: v{{current}}",
         "action": "Update Now"
     },
+    "token_stats": {
+        "title": "Token Consumption Stats",
+        "hourly": "Hour",
+        "daily": "Day",
+        "weekly": "Week",
+        "total_tokens": "Total Tokens",
+        "input_tokens": "Input Tokens",
+        "output_tokens": "Output Tokens",
+        "accounts_used": "Active Accounts",
+        "models_used": "Models Used",
+        "model_trend": "Model Usage Trend",
+        "account_trend": "Account Usage Trend",
+        "usage_trend": "Token Usage Trend",
+        "by_account": "By Account",
+        "by_model": "By Model",
+        "by_account_view": "By Account",
+        "model_details": "Model Breakdown",
+        "account_details": "Account Breakdown",
+        "model": "Model",
+        "account": "Account",
+        "requests": "Requests",
+        "input": "Input",
+        "output": "Output",
+        "total": "Total",
+        "percentage": "Share",
+        "no_data": "No data available"
+    },
     "errors": {
         "stream": {
             "timeout_error": "Request timeout, please check your network connection",
@@ -789,24 +861,5 @@
             "stream_error": "Stream transmission error, please retry later",
             "unknown_error": "Unknown error occurred, please retry later"
         }
-    },
-    "token_stats": {
-        "title": "Token Usage Statistics",
-        "hourly": "Hourly",
-        "daily": "Daily",
-        "weekly": "Weekly",
-        "total_tokens": "Total Tokens",
-        "input_tokens": "Input Tokens",
-        "output_tokens": "Output Tokens",
-        "accounts_used": "Active Accounts",
-        "usage_trend": "Token Usage Trend",
-        "input": "Input",
-        "output": "Output",
-        "no_data": "No Data",
-        "by_account": "Account Statistics",
-        "account_details": "Account Details",
-        "account": "Account",
-        "requests": "Requests",
-        "total": "Total"
     }
 }

@@ -3,8 +3,8 @@ set -e
 
 cleanup() {
     echo "Shutting down..."
-    vncserver -kill :1 2>/dev/null || true
-    pkill -f novnc_proxy 2>/dev/null || true
+    pkill -f "Xtigervnc :1" 2>/dev/null || true
+    pkill -f websockify 2>/dev/null || true
     exit 0
 }
 
@@ -14,20 +14,15 @@ VNC_PASSWORD=${VNC_PASSWORD:-password}
 RESOLUTION=${RESOLUTION:-1280x800}
 NOVNC_PORT=${NOVNC_PORT:-6080}
 
+# Clean up stale X lock files
 rm -rf /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+touch "$HOME/.Xauthority"
 
 mkdir -p "$HOME/.vnc"
 echo "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd"
 chmod 600 "$HOME/.vnc/passwd"
-
-cat > "$HOME/.vnc/xstartup" << 'EOF'
-#!/bin/sh
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-openbox-session &
-exec /usr/bin/antigravity_tools
-EOF
-chmod +x "$HOME/.vnc/xstartup"
 
 echo "Checking for Antigravity Tools..."
 CURRENT_VERSION=$(dpkg -s antigravity-tools 2>/dev/null | grep "Version:" | awk '{print "v"$2}' || echo "none")
@@ -62,28 +57,22 @@ else
     echo "GitHub API rate limit exceeded or network issue, using cached: $CURRENT_VERSION"
 fi
 
-# Clean up any leftover lock files
-rm -rf /tmp/.X11-unix /tmp/.X1-lock 2>/dev/null || true
-mkdir -p /tmp/.X11-unix
-chmod 1777 /tmp/.X11-unix
-
 echo "Starting VNC server..."
 Xtigervnc :1 -auth "$HOME/.Xauthority" -geometry "${RESOLUTION}" -depth 24 \
     -rfbauth "$HOME/.vnc/passwd" -localhost no -SecurityTypes VncAuth \
     -AlwaysShared -AcceptKeyEvents -AcceptPointerEvents -AcceptSetDesktopSize &
 
-# Give X some time to start
+# Wait for X server to be ready
 timeout 10 bash -c 'until xset q &>/dev/null; do sleep 0.5; done' || echo "Xtigervnc startup timeout"
+
+echo "Starting Openbox..."
+openbox-session &
 
 echo "Starting noVNC proxy..."
 websockify --web /usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5901 &
 
 echo "Ready: http://localhost:${NOVNC_PORT}/vnc_lite.html"
+echo "Starting Antigravity Tools..."
 
-while true; do
-    if ! pgrep Xtigervnc > /dev/null; then
-        echo "Xtigervnc crashed, exiting..."
-        exit 1
-    fi
-    sleep 5
-done
+# Run app with exec (replaces shell process, keeps container alive)
+exec /usr/bin/antigravity_tools

@@ -18,17 +18,16 @@ pub async fn monitor_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    if !state.monitor.is_enabled() {
-        return next.run(request).await;
-    }
-
-    let start = Instant::now();
+    let _logging_enabled = state.monitor.is_enabled();
+    
     let method = request.method().to_string();
     let uri = request.uri().to_string();
     
     if uri.contains("event_logging") {
         return next.run(request).await;
     }
+    
+    let start = Instant::now();
     
     let mut model = if uri.contains("/v1beta/models/") {
         uri.split("/v1beta/models/")
@@ -196,7 +195,10 @@ pub async fn monitor_middleware(
                         }
                         
                         // Token usage extraction
-                        if let Some(usage) = json.get("usage").or(json.get("usageMetadata")) {
+                        if let Some(usage) = json.get("usage")
+                            .or(json.get("usageMetadata"))
+                            .or(json.get("response").and_then(|r| r.get("usage")))
+                        {
                             log.input_tokens = usage.get("prompt_tokens")
                                 .or(usage.get("input_tokens"))
                                 .or(usage.get("promptTokenCount"))
@@ -254,7 +256,10 @@ pub async fn monitor_middleware(
                         if line.starts_with("data: ") && (line.contains("\"usage\"") || line.contains("\"usageMetadata\"")) {
                             let json_str = line.trim_start_matches("data: ").trim();
                             if let Ok(json) = serde_json::from_str::<Value>(json_str) {
-                                if let Some(usage) = json.get("usage").or(json.get("usageMetadata")) {
+                                if let Some(usage) = json.get("usage")
+                                    .or(json.get("usageMetadata"))
+                                    .or(json.get("response").and_then(|r| r.get("usage")))
+                                {
                                     log.input_tokens = usage.get("prompt_tokens")
                                         .or(usage.get("input_tokens"))
                                         .or(usage.get("promptTokenCount"))

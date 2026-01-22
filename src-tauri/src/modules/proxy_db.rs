@@ -257,8 +257,8 @@ pub fn get_logs_count_filtered(filter: &str, errors_only: bool) -> Result<u64, S
     } else if filter.is_empty() {
         "SELECT COUNT(*) FROM request_logs"
     } else {
-        "SELECT COUNT(*) FROM request_logs WHERE 
-            (url LIKE ?1 OR method LIKE ?1 OR model LIKE ?1 OR CAST(status AS TEXT) LIKE ?1)"
+        "SELECT COUNT(*) FROM request_logs WHERE
+            (url LIKE ?1 OR method LIKE ?1 OR model LIKE ?1 OR CAST(status AS TEXT) LIKE ?1 OR account_email LIKE ?1)"
     };
     
     let count: u64 = if filter.is_empty() && !errors_only {
@@ -300,7 +300,7 @@ pub fn get_logs_filtered(filter: &str, errors_only: bool, limit: usize, offset: 
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, account_email, mapped_model, protocol
          FROM request_logs 
-         WHERE (url LIKE ?3 OR method LIKE ?3 OR model LIKE ?3 OR CAST(status AS TEXT) LIKE ?3)
+         WHERE (url LIKE ?3 OR method LIKE ?3 OR model LIKE ?3 OR CAST(status AS TEXT) LIKE ?3 OR account_email LIKE ?3)
          ORDER BY timestamp DESC 
          LIMIT ?1 OFFSET ?2"
     };

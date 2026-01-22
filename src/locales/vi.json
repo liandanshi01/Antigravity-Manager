@@ -543,7 +543,58 @@
                 "title": "Cài đặt thử nghiệm",
                 "title_tooltip": "Các tính năng mang tính khám phá, có thể được điều chỉnh hoặc loại bỏ trong các phiên bản tương lai.",
                 "enable_usage_scaling": "Bật thu phóng dữ liệu sử dụng",
-                "enable_usage_scaling_tooltip": "Dành cho giao thức tương thích với Claude. Khi tổng đầu vào vượt quá 30k Token, hãy bật tính năng thu phóng linh hoạt để ngăn việc kích hoạt nén phía máy khách thường xuyên trong ngữ cảnh lớn. Lưu ý: Sau khi bật, lượng dữ liệu sử dụng hiển thị trên máy khách sẽ không còn đại diện cho điểm thanh toán thực tế."
+                "enable_usage_scaling_tooltip": "Dành cho giao thức tương thích với Claude. Khi tổng đầu vào vượt quá 30k Token, hãy bật tính năng thu phóng linh hoạt để ngăn việc kích hoạt nén phía máy khách thường xuyên trong ngữ cảnh lớn. Lưu ý: Sau khi bật, lượng dữ liệu sử dụng hiển thị trên máy khách sẽ không còn đại diện cho điểm thanh toán thực tế.",
+                "context_compression_threshold_l1": "Ngưỡng nén L1 (Cắt tỉa công cụ)",
+                "context_compression_threshold_l1_tooltip": "Cắt tỉa lịch sử gọi công cụ cũ để tiết kiệm không gian. Khuyên dùng: 0.4 (40%)",
+                "context_compression_threshold_l2": "Ngưỡng nén L2 (Nén tư duy)",
+                "context_compression_threshold_l2_tooltip": "Nén các khối tư duy sớm trong khi vẫn giữ chữ ký. Khuyên dùng: 0.55 (55%)",
+                "context_compression_threshold_l3": "Ngưỡng nén L3 (Đặt lại tóm tắt)",
+                "context_compression_threshold_l3_tooltip": "Tạo bản tóm tắt trạng thái XML và chuyển sang phiên họp mới. Khuyên dùng: 0.7 (70%)"
+            },
+            "cloudflared": {
+                "title": "Truy cập Công khai (Cloudflared)",
+                "subtitle": "Phơi bày dịch vụ cục bộ ra internet qua Cloudflare Tunnel",
+                "not_installed": "Cloudflared chưa được cài đặt",
+                "install_hint": "Cloudflared là công cụ tunnel miễn phí từ Cloudflare. Nó phơi bày proxy cục bộ của bạn ra internet mà không cần IP công khai hoặc chuyển tiếp cổng. Nhấp vào nút bên dưới để cài đặt.",
+                "install": "Cài đặt Ngay",
+                "installing": "Đang cài đặt...",
+                "install_success": "Đã cài đặt Cloudflared thành công",
+                "install_failed": "Cài đặt thất bại: {{error}}",
+                "installed": "Đã cài đặt",
+                "version": "Phiên bản",
+                "mode_label": "Chế độ Tunnel",
+                "mode_quick": "Tunnel Nhanh",
+                "mode_quick_desc": "URL tạm thời tự động tạo (*.trycloudflare.com), không cần tài khoản, URL thay đổi khi khởi động lại",
+                "mode_auth": "Tunnel Có tên",
+                "mode_auth_desc": "Sử dụng token tài khoản Cloudflare, hỗ trợ domain tùy chỉnh, URL vĩnh viễn",
+                "token": "Token Tunnel",
+                "token_placeholder": "Dán Cloudflare Tunnel Token của bạn vào đây",
+                "token_hint": "Lấy từ bảng điều khiển Cloudflare Zero Trust",
+                "token_required": "Token là bắt buộc cho chế độ Tunnel Có tên",
+                "use_http2": "Sử dụng HTTP/2",
+                "use_http2_desc": "Tương thích hơn, được khuyến nghị cho Trung Quốc đại lục",
+                "status_label": "Trạng thái Tunnel",
+                "status_stopped": "Đã dừng",
+                "status_starting": "Đang khởi động...",
+                "status_running": "Đang chạy",
+                "status_error": "Lỗi",
+                "public_url": "URL Công khai",
+                "public_url_copied": "Đã sao chép URL",
+                "start_tunnel": "Khởi động Tunnel",
+                "stop_tunnel": "Dừng Tunnel",
+                "restart_tunnel": "Khởi động lại Tunnel",
+                "starting": "Đang khởi động...",
+                "stopping": "Đang dừng...",
+                "start_success": "Tunnel đã khởi động thành công",
+                "stop_success": "Tunnel đã dừng",
+                "start_failed": "Khởi động tunnel thất bại: {{error}}",
+                "stop_failed": "Dừng tunnel thất bại: {{error}}",
+                "logs": "Nhật ký",
+                "clear_logs": "Xóa Nhật ký",
+                "auto_start": "Tự động khởi động cùng proxy",
+                "auto_start_desc": "Tự động khởi động tunnel khi dịch vụ API Proxy khởi động",
+                "warning_quick_mode": "⚠️ Chế độ Nhanh: URL thay đổi mỗi lần khởi động lại",
+                "warning_token_storage": "💡 Token được lưu trữ an toàn cục bộ"
             }
         },
         "example": {
@@ -736,7 +787,9 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "Ảnh",
-            "reset": "Đặt lại"
+            "reset": "Đặt lại",
+            "by_account": "Lọc theo tài khoản",
+            "all_accounts": "Tất cả tài khoản"
         },
         "table": {
             "status": "Trạng thái",
@@ -794,15 +847,6 @@
         "message": "Có phiên bản mới với nhiều tối ưu và cải tiến. Hiện tại: v{{current}}",
         "action": "Cập nhật ngay"
     },
-    "errors": {
-        "stream": {
-            "timeout_error": "Hết thời gian yêu cầu, vui lòng kiểm tra kết nối mạng",
-            "connection_error": "Kết nối thất bại, vui lòng kiểm tra mạng hoặc cài đặt proxy",
-            "decode_error": "Mạng không ổn định, truyền dữ liệu bị gián đoạn. Gợi ý: 1) Kiểm tra mạng 2) Đổi proxy 3) Thử lại",
-            "stream_error": "Lỗi truyền stream, vui lòng thử lại sau",
-            "unknown_error": "Đã xảy ra lỗi không xác định, vui lòng thử lại sau"
-        }
-    },
     "token_stats": {
         "title": "Thống kê Token",
         "hourly": "Hàng giờ",
@@ -812,14 +856,22 @@
         "input_tokens": "Token đầu vào",
         "output_tokens": "Token đầu ra",
         "accounts_used": "Tài khoản hoạt động",
-        "usage_trend": "Xu hướng sử dụng",
+        "models_used": "Model đã dùng",
+        "model_trend": "Xu hướng sử dụng theo Model",
+        "account_trend": "Xu hướng sử dụng theo tài khoản",
+        "usage_trend": "Xu hướng sử dụng Token",
+        "by_account": "Theo tài khoản",
+        "by_model": "Theo mô hình",
+        "by_account_view": "Theo tài khoản",
+        "model_details": "Chi tiết theo Model",
+        "account_details": "Chi tiết theo tài khoản",
+        "model": "Model",
+        "account": "Tài khoản",
+        "requests": "Số yêu cầu",
         "input": "Đầu vào",
         "output": "Đầu ra",
-        "no_data": "Không có dữ liệu",
-        "by_account": "Thống kê theo tài khoản",
-        "account_details": "Chi tiết tài khoản",
-        "account": "Tài khoản",
-        "requests": "Yêu cầu",
-        "total": "Tổng cộng"
+        "total": "Tổng",
+        "percentage": "Tỷ lệ",
+        "no_data": "Không có dữ liệu"
     }
 }

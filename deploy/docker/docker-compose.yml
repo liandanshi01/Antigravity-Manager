@@ -1,7 +1,11 @@
 services:
   antigravity:
     container_name: antigravity-manager
-    build: .
+    build:
+      context: .
+      args:
+        USE_CHINA_MIRROR: ${USE_CHINA_MIRROR:-false}
+    init: true
     ports:
       - "${NOVNC_PORT:-6080}:${NOVNC_PORT:-6080}"
       - "8045:8045"

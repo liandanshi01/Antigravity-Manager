@@ -10,10 +10,13 @@ ARG USERNAME=antigravity
 ARG USER_UID=1000
 ARG USER_GID=1000
 
-RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
+ARG USE_CHINA_MIRROR=false
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+    sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
     sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn\/debian-security/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
     sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list 2>/dev/null || true && \
-    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn\/debian-security/g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn\/debian-security/g' /etc/apt/sources.list 2>/dev/null || true; \
+    fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openbox \
@@ -31,6 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     sudo \
     xdg-utils \
+    python3-xdg \
+    libgl1-mesa-dri \
+    pciutils \
+    x11-xserver-utils \
     && echo "en_US.UTF-8 UTF-8" > /etc/locale.gen \
     && locale-gen \
     && groupadd --gid $USER_GID $USERNAME \
@@ -38,8 +45,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:/usr/bin/apt-get,/usr/bin/dpkg,/bin/rm" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME \
     && mkdir -p /home/$USERNAME/.vnc /home/$USERNAME/.mozilla /home/$USERNAME/.antigravity_tools \
-    && echo "#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nopenbox-session &\nexec /usr/bin/antigravity_tools" > /home/$USERNAME/.vnc/xstartup \
-    && chmod +x /home/$USERNAME/.vnc/xstartup \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME \
     && apt-get autoremove -y \
     && apt-get clean \
@@ -69,6 +74,6 @@ USER antigravity
 WORKDIR /home/antigravity
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD pgrep -x Xtigervnc > /dev/null && pgrep -f novnc_proxy > /dev/null || exit 1
+    CMD pgrep -x Xtigervnc > /dev/null && pgrep -f websockify > /dev/null && pgrep -f antigravity_tools > /dev/null || exit 1
 
 CMD ["/home/antigravity/start.sh"]

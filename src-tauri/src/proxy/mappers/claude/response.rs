@@ -5,28 +5,6 @@ use super::models::*;
 use super::utils::to_claude_usage;
 use serde_json::json;
 
-/// [FIX #547] Helper function to coerce string values to boolean
-/// Gemini sometimes sends boolean parameters as strings (e.g., "true", "-n", "false")
-fn coerce_to_bool(value: &serde_json::Value) -> Option<serde_json::Value> {
-    match value {
-        serde_json::Value::Bool(_) => Some(value.clone()), // Already boolean
-        serde_json::Value::String(s) => {
-            let lower = s.to_lowercase();
-            if lower == "true" || lower == "yes" || lower == "1" || lower == "-n" {
-                Some(serde_json::json!(true))
-            } else if lower == "false" || lower == "no" || lower == "0" {
-                Some(serde_json::json!(false))
-            } else {
-                None // Unknown string, can't coerce
-            }
-        }
-        serde_json::Value::Number(n) => {
-            Some(serde_json::json!(n.as_i64().map(|i| i != 0).unwrap_or(false)))
-        }
-        _ => None,
-    }
-}
-
 /// Known parameter remappings for Gemini → Claude compatibility
 /// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
 fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
@@ -55,7 +33,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Remapped Grep: query → pattern");
                     }
                 }
-                
+
                 // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
@@ -77,7 +55,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Added default path: \".\"");
                     }
                 }
-                
+
                 // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
             }
             "glob" => {
@@ -96,7 +74,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Remapped Glob: query → pattern");
                     }
                 }
-                
+
                 // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
@@ -129,31 +107,39 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 }
             }
             "ls" => {
-                 // LS tool: ensure "path" parameter exists
-                 if !obj.contains_key("path") {
-                     obj.insert("path".to_string(), serde_json::json!("."));
-                     tracing::debug!("[Response] Remapped LS: default path → \".\"");
-                 }
+                // LS tool: ensure "path" parameter exists
+                if !obj.contains_key("path") {
+                    obj.insert("path".to_string(), serde_json::json!("."));
+                    tracing::debug!("[Response] Remapped LS: default path → \".\"");
+                }
             }
             other => {
-                 // [NEW] [Issue #785] Generic Property Mapping for all tools
-                 // If a tool has "paths" (array of 1) but no "path", convert it.
-                 let mut path_to_inject = None;
-                 if !obj.contains_key("path") {
-                     if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
-                         if paths.len() == 1 {
-                             if let Some(p) = paths[0].as_str() {
-                                 path_to_inject = Some(p.to_string());
-                             }
-                         }
-                     }
-                 }
-                 
-                 if let Some(path) = path_to_inject {
-                     obj.insert("path".to_string(), serde_json::json!(path));
-                     tracing::debug!("[Response] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")", other, path);
-                 }
-                 tracing::debug!("[Response] Unmapped tool call processed via generic rules: {} (keys: {:?})", other, obj.keys());
+                // [NEW] [Issue #785] Generic Property Mapping for all tools
+                // If a tool has "paths" (array of 1) but no "path", convert it.
+                let mut path_to_inject = None;
+                if !obj.contains_key("path") {
+                    if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
+                        if paths.len() == 1 {
+                            if let Some(p) = paths[0].as_str() {
+                                path_to_inject = Some(p.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(path) = path_to_inject {
+                    obj.insert("path".to_string(), serde_json::json!(path));
+                    tracing::debug!(
+                        "[Response] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")",
+                        other,
+                        path
+                    );
+                }
+                tracing::debug!(
+                    "[Response] Unmapped tool call processed via generic rules: {} (keys: {:?})",
+                    other,
+                    obj.keys()
+                );
             }
         }
     }
@@ -182,7 +168,7 @@ impl NonStreamingProcessor {
             thinking_signature: None,
             trailing_signature: None,
             has_tool_call: false,
-            scaling_enabled: false, 
+            scaling_enabled: false,
             context_limit: 1_048_576, // Default to 1M
             session_id,
             model_name,
@@ -190,7 +176,12 @@ impl NonStreamingProcessor {
     }
 
     /// 处理 Gemini 响应并转换为 Claude 响应
-    pub fn process(&mut self, gemini_response: &GeminiResponse, scaling_enabled: bool, context_limit: u32) -> ClaudeResponse {
+    pub fn process(
+        &mut self,
+        gemini_response: &GeminiResponse,
+        scaling_enabled: bool,
+        context_limit: u32,
+    ) -> ClaudeResponse {
         self.scaling_enabled = scaling_enabled;
         self.context_limit = context_limit;
         // 获取 parts
@@ -240,25 +231,34 @@ impl NonStreamingProcessor {
                 Ok(decoded_bytes) => {
                     match String::from_utf8(decoded_bytes) {
                         Ok(decoded_str) => {
-                            tracing::debug!("[Response] Decoded base64 signature (len {} -> {})", sig.len(), decoded_str.len());
+                            tracing::debug!(
+                                "[Response] Decoded base64 signature (len {} -> {})",
+                                sig.len(),
+                                decoded_str.len()
+                            );
                             decoded_str
-                        },
-                        Err(_) => sig.clone() // Not valid UTF-8, keep as is
+                        }
+                        Err(_) => sig.clone(), // Not valid UTF-8, keep as is
                     }
-                },
-                Err(_) => sig.clone() // Not base64, keep as is
+                }
+                Err(_) => sig.clone(), // Not base64, keep as is
             }
         });
 
         // [FIX #765] Cache signature in NonStreamingProcessor
         if let Some(sig) = &signature {
             if let Some(s_id) = &self.session_id {
-                crate::proxy::SignatureCache::global().cache_session_signature(s_id, sig.to_string());
-                crate::proxy::SignatureCache::global().cache_thinking_family(sig.to_string(), self.model_name.clone());
-                tracing::debug!("[Claude-Response] Cached signature (len: {}) for session: {}", sig.len(), s_id);
+                crate::proxy::SignatureCache::global()
+                    .cache_session_signature(s_id, sig.to_string());
+                crate::proxy::SignatureCache::global()
+                    .cache_thinking_family(sig.to_string(), self.model_name.clone());
+                tracing::debug!(
+                    "[Claude-Response] Cached signature (len: {}) for session: {}",
+                    sig.len(),
+                    s_id
+                );
             }
         }
-
 
         // 1. FunctionCall 处理
         if let Some(fc) = &part.function_call {
@@ -469,9 +469,8 @@ impl NonStreamingProcessor {
         }
 
         if !current_text.is_empty() {
-            self.content_blocks.push(ContentBlock::Text {
-                text: current_text,
-            });
+            self.content_blocks
+                .push(ContentBlock::Text { text: current_text });
         }
     }
 
@@ -537,7 +536,13 @@ impl NonStreamingProcessor {
 }
 
 /// 转换 Gemini 响应为 Claude 响应 (公共接口)
-pub fn transform_response(gemini_response: &GeminiResponse, scaling_enabled: bool, context_limit: u32, session_id: Option<String>, model_name: String) -> Result<ClaudeResponse, String> {
+pub fn transform_response(
+    gemini_response: &GeminiResponse,
+    scaling_enabled: bool,
+    context_limit: u32,
+    session_id: Option<String>,
+    model_name: String,
+) -> Result<ClaudeResponse, String> {
     let mut processor = NonStreamingProcessor::new(session_id, model_name);
     Ok(processor.process(gemini_response, scaling_enabled, context_limit))
 }
@@ -575,7 +580,13 @@ mod tests {
             response_id: Some("resp_123".to_string()),
         };
 
-        let result = transform_response(&gemini_resp, false, 1_000_000, None, "gemini-2.5-flash".to_string());
+        let result = transform_response(
+            &gemini_resp,
+            false,
+            1_000_000,
+            None,
+            "gemini-2.5-flash".to_string(),
+        );
         assert!(result.is_ok());
 
         let claude_resp = result.unwrap();
@@ -625,7 +636,13 @@ mod tests {
             response_id: Some("resp_456".to_string()),
         };
 
-        let result = transform_response(&gemini_resp, false, 1_000_000, None, "gemini-2.5-flash".to_string());
+        let result = transform_response(
+            &gemini_resp,
+            false,
+            1_000_000,
+            None,
+            "gemini-2.5-flash".to_string(),
+        );
         assert!(result.is_ok());
 
         let claude_resp = result.unwrap();

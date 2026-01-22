@@ -1,6 +1,5 @@
 {
     "common": {
-        "empty": "空",
         "loading": "加载中...",
         "load_more": "加载更多",
         "add": "添加",
@@ -40,7 +39,7 @@
         "accounts": "账号管理",
         "proxy": "API 反代",
         "call_records": "流量日志",
-        "token_stats": "统计",
+        "token_stats": "Token 统计",
         "settings": "设置",
         "theme_to_dark": "切换到深色模式",
         "theme_to_light": "切换到浅色模式",
@@ -169,8 +168,7 @@
             "restored": "已恢复",
             "deleted": "已删除",
             "directory_opened": "已打开设备存储目录",
-            "original_fingerprint_not_found": "未找到原始指纹",
-            "storage_json_not_found": "未找到 storage.json，请确认 Antigravity 已运行过并生成配置文件"
+            "original_fingerprint_not_found": "未找到原始指纹"
         },
         "warmup_all": "一键预热",
         "warmup_selected": "预热 ({{count}})",
@@ -540,19 +538,64 @@
                 "max_wait": "最大等待时长 (秒)",
                 "max_wait_tooltip": "仅在“缓存优先”模式下生效：如果账号限流重置时间小于此值，则原地等待而非切换账号。",
                 "clear_bindings": "清除会话绑定",
-                "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。",
-                "fixed_account": "固定账号模式",
-                "fixed_account_tooltip": "启用后，所有 API 请求将仅使用选定的账号，而不是在账号之间轮换。",
-                "round_robin_set": "已切换为轮询模式",
-                "fixed_account_set": "已启用固定账号模式",
-                "account_changed": "账号已切换为: {{email}}"
+                "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。"
             },
             "experimental": {
                 "title": "实验性设置 (Experimental)",
                 "title_tooltip": "探索性功能，可能在未来版本中调整或移除。",
                 "enable_usage_scaling": "启用用量缩放",
-                "enable_usage_scaling_tooltip": "针对 Claude 兼容协议。当总输入超过 30k Token 时开启激进缩放，防止在大上下文下频繁触发客户端压缩。注意：开启后客户端显示的用量不再代表实际计费点数。"
+                "enable_usage_scaling_tooltip": "针对 Claude 兼容协议。当总输入超过 30k Token 时开启激进缩放，防止在大上下文下频繁触发客户端压缩。注意：开启后客户端显示的用量不再代表实际计费点数。",
+                "context_compression_threshold_l1": "L1 压缩阈值 (工具记录清理)",
+                "context_compression_threshold_l1_tooltip": "清理旧的工具调用记录以节省空间。建议值: 0.4 (40%)",
+                "context_compression_threshold_l2": "L2 压缩阈值 (思维链压缩)",
+                "context_compression_threshold_l2_tooltip": "压缩早期的思维链内容，保留签名。建议值: 0.55 (55%)",
+                "context_compression_threshold_l3": "L3 压缩阈值 (摘要重置)",
+                "context_compression_threshold_l3_tooltip": "强制生成 XML 状态摘要并重置会话。这是最省 token 的手段。建议值: 0.7 (70%)"
             }
+        },
+        "cloudflared": {
+            "title": "公网访问 (Cloudflared)",
+            "subtitle": "通过 Cloudflare 隧道将本地服务暴露到公网",
+            "not_installed": "Cloudflared 未安装",
+            "install_hint": "Cloudflared 是 Cloudflare 提供的免费隧道工具,可将本地反代服务暴露到公网,无需公网IP或端口映射。点击下方按钮一键下载安装。",
+            "install": "一键安装",
+            "installing": "安装中...",
+            "install_success": "Cloudflared 安装成功",
+            "install_failed": "安装失败: {{error}}",
+            "installed": "已安装",
+            "version": "版本",
+            "mode_label": "隧道模式",
+            "mode_quick": "快速隧道",
+            "mode_quick_desc": "自动生成临时 URL (*.trycloudflare.com),无需账号,重启后URL会变化",
+            "mode_auth": "命名隧道",
+            "mode_auth_desc": "使用 Cloudflare 账号 Token,支持自定义域名,URL固定不变",
+            "token": "隧道 Token",
+            "token_placeholder": "粘贴您的 Cloudflare Tunnel Token",
+            "token_hint": "从 Cloudflare Zero Trust 控制台获取",
+            "token_required": "命名隧道模式需要提供 Token",
+            "use_http2": "使用 HTTP/2",
+            "use_http2_desc": "兼容性更好,推荐中国大陆用户开启",
+            "status_label": "隧道状态",
+            "status_stopped": "未运行",
+            "status_starting": "启动中...",
+            "status_running": "运行中",
+            "status_stopping": "停止中...",
+            "status_error": "错误",
+            "public_url": "公网地址",
+            "public_url_placeholder": "隧道启动后将显示公网访问地址",
+            "copy_url": "复制地址",
+            "url_copied": "地址已复制",
+            "start_tunnel": "启动隧道",
+            "stop_tunnel": "停止隧道",
+            "running": "隧道运行中",
+            "started": "隧道已启动",
+            "stopped": "隧道已停止",
+            "start_failed": "启动失败: {{error}}",
+            "stop_failed": "停止失败: {{error}}",
+            "require_proxy_running": "请先启动本地反代服务,再开启隧道",
+            "connection_info": "连接信息",
+            "local_port": "本地端口",
+            "tunnel_protocol": "隧道协议"
         },
         "example": {
             "title": "使用示例",
@@ -743,7 +786,9 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "绘图",
-            "reset": "重置"
+            "reset": "重置",
+            "by_account": "按账号筛选",
+            "all_accounts": "全部账号"
         },
         "table": {
             "status": "状态",
@@ -781,15 +826,6 @@
         "message": "新版本已准备就绪，包含多项优化与改进。当前版本: v{{current}}",
         "action": "立即更新"
     },
-    "errors": {
-        "stream": {
-            "timeout_error": "请求超时,请检查网络连接",
-            "connection_error": "无法连接到服务器,请检查网络或代理设置",
-            "decode_error": "网络连接不稳定,数据传输中断。建议: 1) 检查网络连接 2) 更换代理节点 3) 稍后重试",
-            "stream_error": "数据流传输错误,请稍后重试",
-            "unknown_error": "发生未知错误,请稍后重试"
-        }
-    },
     "token_stats": {
         "title": "Token 消费统计",
         "hourly": "小时",
@@ -799,14 +835,31 @@
         "input_tokens": "输入 Token",
         "output_tokens": "输出 Token",
         "accounts_used": "活跃账号",
+        "models_used": "使用模型",
+        "model_trend": "分模型使用趋势",
+        "account_trend": "分账号使用趋势",
         "usage_trend": "Token 使用趋势",
-        "input": "输入",
-        "output": "输出",
-        "no_data": "暂无数据",
         "by_account": "分账号统计",
+        "by_model": "按模型",
+        "by_account_view": "按账号",
+        "model_details": "分模型详细统计",
         "account_details": "账号详细统计",
+        "model": "模型",
         "account": "账号",
         "requests": "请求数",
-        "total": "合计"
+        "input": "输入",
+        "output": "输出",
+        "total": "合计",
+        "percentage": "占比",
+        "no_data": "暂无数据"
+    },
+    "errors": {
+        "stream": {
+            "timeout_error": "请求超时,请检查网络连接",
+            "connection_error": "无法连接到服务器,请检查网络或代理设置",
+            "decode_error": "网络连接不稳定,数据传输中断。建议: 1) 检查网络连接 2) 更换代理节点 3) 稍后重试",
+            "stream_error": "数据流传输错误,请稍后重试",
+            "unknown_error": "发生未知错误,请稍后重试"
+        }
     }
 }

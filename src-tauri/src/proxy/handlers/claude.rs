@@ -16,19 +16,80 @@ use crate::proxy::mappers::claude::{
     transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
     filter_invalid_thinking_blocks_with_family, close_tool_loop_for_thinking,
     clean_cache_control_from_messages, merge_consecutive_messages,
+    models::{Message, MessageContent},
 };
 use crate::proxy::server::AppState;
-use crate::proxy::mappers::context_manager::{ContextManager, PurificationStrategy};
+use crate::proxy::mappers::context_manager::ContextManager;
+use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 use axum::http::HeaderMap;
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
-const MIN_SIGNATURE_LENGTH: usize = 10;  // 最小有效签名长度
 
 // ===== Model Constants for Background Tasks =====
 // These can be adjusted for performance/cost optimization
-const BACKGROUND_MODEL_LITE: &str = "gemini-2.5-flash-lite";  // For simple/lightweight tasks
+const BACKGROUND_MODEL_LITE: &str = "gemini-2.5-flash";  // For simple/lightweight tasks
 const BACKGROUND_MODEL_STANDARD: &str = "gemini-2.5-flash";   // For complex background tasks
+
+// ===== Layer 3: XML Summary Prompt Template =====
+// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
+// This prompt generates a structured 8-section XML summary for context compression
+const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
+
+This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.
+
+First, think through the entire history in a private <scratchpad>. Review the user's overall goal, the agent's actions, tool outputs, file modifications, and any unresolved issues. Identify every piece of information critical for future actions.
+
+After reasoning, generate the final <state_snapshot> XML object. Information must be extremely dense. Omit any irrelevant conversational filler.
+
+The structure MUST be as follows:
+
+<state_snapshot>
+  <overall_goal>
+    <!-- Describe the user's high-level goal in one concise sentence -->
+  </overall_goal>
+  
+  <technical_context>
+    <!-- Tech stack: frameworks, languages, toolchain, dependency versions -->
+  </technical_context>
+  
+  <file_system_state>
+    <!-- List files that were created, read, modified, or deleted. Note their status -->
+  </file_system_state>
+  
+  <code_changes>
+    <!-- Key code snippets (preserve function signatures and important logic) -->
+  </code_changes>
+  
+  <debugging_history>
+    <!-- List all errors encountered, with stack traces, and how they were fixed -->
+  </debugging_history>
+  
+  <current_plan>
+    <!-- Step-by-step plan. Mark completed steps -->
+  </current_plan>
+  
+  <user_preferences>
+    <!-- User's work preferences for this project (test commands, code style, etc.) -->
+  </user_preferences>
+  
+  <key_decisions>
+    <!-- Critical architectural decisions and design choices -->
+  </key_decisions>
+  
+  <latest_thinking_signature>
+    <!-- [CRITICAL] Preserve the last valid thinking signature -->
+    <!-- Format: base64-encoded signature string -->
+    <!-- This MUST be copied exactly as-is, no modifications -->
+  </latest_thinking_signature>
+</state_snapshot>
+
+**IMPORTANT**:
+1. Code snippets must be complete, including function signatures and key logic
+2. Error messages must be preserved verbatim, including line numbers and stacks
+3. File paths must use absolute paths
+4. The thinking signature must be copied exactly, no modifications
+"#;
 
 // ===== Jitter Configuration (REMOVED) =====
 // Jitter was causing connection instability, reverted to fixed delays
@@ -315,8 +376,12 @@ pub async fn handle_messages(
     // Google Flow 继续使用 request 对象
     // (后续代码不需要再次 filter_invalid_thinking_blocks)
     
-    // [NEW] 获取上下文缩放配置
-    let scaling_enabled = state.experimental.read().await.enable_usage_scaling;
+    // [NEW] 获取上下文控制配置
+    let experimental = state.experimental.read().await;
+    let scaling_enabled = experimental.enable_usage_scaling;
+    let threshold_l1 = experimental.context_compression_threshold_l1;
+    let threshold_l2 = experimental.context_compression_threshold_l2;
+    let threshold_l3 = experimental.context_compression_threshold_l3;
 
     // 获取最新一条“有意义”的消息内容（用于日志记录和后台任务检测）
     // 策略：反向遍历，首先筛选出所有角色为 "user" 的消息，然后从中找到第一条非 "Warmup" 且非空的文本消息
@@ -426,7 +491,7 @@ pub async fn handle_messages(
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
 
     let mut last_error = String::new();
-    let mut retried_without_thinking = false;
+    let retried_without_thinking = false;
     let mut last_email: Option<String> = None;
     
     for attempt in 0..max_attempts {
@@ -441,7 +506,13 @@ pub async fn handle_messages(
             list.iter().map(|t| serde_json::to_value(t).unwrap_or(json!({}))).collect()
         });
 
-        let config = crate::proxy::mappers::common_utils::resolve_request_config(&request_for_body.model, &mapped_model, &tools_val);
+        let config = crate::proxy::mappers::common_utils::resolve_request_config(
+            &request_for_body.model, 
+            &mapped_model, 
+            &tools_val,
+            request.size.as_deref(),      // [NEW] Pass size parameter
+            request.quality.as_deref()    // [NEW] Pass quality parameter
+        );
 
         // 0. 尝试提取 session_id 用于粘性调度 (Phase 2/3)
         // 使用 SessionManager 生成稳定的会话指纹
@@ -504,61 +575,168 @@ pub async fn handle_messages(
             request_with_mapped.thinking = None;
             
             // 3. 清理历史消息中的 Thinking Block，防止 Invalid Argument
-            for msg in request_with_mapped.messages.iter_mut() {
-                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) = &mut msg.content {
-                    blocks.retain(|b| !matches!(b, 
-                        crate::proxy::mappers::claude::models::ContentBlock::Thinking { .. } |
-                        crate::proxy::mappers::claude::models::ContentBlock::RedactedThinking { .. }
-                    ));
-                }
-            }
+            // 使用 ContextManager 的统一策略 (Aggressive)
+            crate::proxy::mappers::context_manager::ContextManager::purify_history(
+                &mut request_with_mapped.messages, 
+                crate::proxy::mappers::context_manager::PurificationStrategy::Aggressive
+            );
         }
 
-        // ===== [Context Purification] Dynamic Thinking Stripping (Issue #PromptTooLong) =====
-        // 对 Pro/Flash 模型进行差异化的上下文管理
+        // ===== [3-Layer Progressive Compression + Calibrated Estimation] Context Management =====
+        // [ENHANCED] 整合 3.3.47 的三层压缩框架 + PR #925 的动态校准机制
+        // Layer 1 (60%): Tool message trimming - Does NOT break cache
+        // Layer 2 (75%): Thinking purification - Breaks cache but preserves signatures
+        // Layer 3 (90%): Fork conversation + XML summary - Ultimate optimization
         let mut is_purified = false;
+        let mut compression_applied = false;
+        
         if !retried_without_thinking {
-            // 1. 确定上下文限制 (Flash: ~1M, Pro: ~2M)
-            // Conservatively use 900k for Flash and 1.8M for Pro to check pressure
+            // 1. Determine context limit (Flash: ~1M, Pro: ~2M)
             let context_limit = if mapped_model.contains("flash") {
                 1_000_000
             } else {
                 2_000_000
             };
 
-            // 2. 估算当前用量
-            let estimated_usage = ContextManager::estimate_token_usage(&request_with_mapped);
-            let usage_ratio = estimated_usage as f32 / context_limit as f32;
-
-            // 3. 确定清洗策略
-            // > 90%: 激进剥离 (Aggressive) - 移除所有历史 Thinking
-            // > 60%: 柔性剥离 (Soft) - 仅保留最近 2 轮 Thinking
-            // < 60%: 不处理
-            // 3. 确定清洗策略
-            // > 90%: 激进剥离 (Aggressive) - 移除所有历史 Thinking
-            // > 60%: 柔性剥离 (Soft) - 仅保留最近 2 轮 Thinking
-            // < 60%: 不处理
-            let strategy = if usage_ratio > 0.9 {
-                PurificationStrategy::Aggressive
-            } else if usage_ratio > 0.6 {
-                PurificationStrategy::Soft
-            } else {
-                PurificationStrategy::None
-            };
+            // 2. [ENHANCED] 使用校准器提高估算准确度 (PR #925)
+            let raw_estimated = ContextManager::estimate_token_usage(&request_with_mapped);
+            let calibrator = get_calibrator();
+            let mut estimated_usage = calibrator.calibrate(raw_estimated);
+            let mut usage_ratio = estimated_usage as f32 / context_limit as f32;
             
-            // 4. 执行清洗
-            if strategy != PurificationStrategy::None {
+            info!(
+                "[{}] [ContextManager] Context pressure: {:.1}% (raw: {}, calibrated: {} / {}), Calibration factor: {:.2}",
+                trace_id, usage_ratio * 100.0, raw_estimated, estimated_usage, context_limit, calibrator.get_factor()
+            );
+
+            // ===== Layer 1: Tool Message Trimming (L1 threshold) =====
+            // Borrowed from Practical-Guide-to-Context-Engineering
+            // Advantage: Completely cache-friendly (only removes messages, doesn't modify content)
+            if usage_ratio > threshold_l1 && !compression_applied {
+                if ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5) {
+                    info!(
+                        "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
+                        trace_id, usage_ratio * 100.0, threshold_l1 * 100.0
+                    );
+                    compression_applied = true;
+                    
+                    // Re-estimate after trimming (with calibration)
+                    let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
+                    let new_usage = calibrator.calibrate(new_raw);
+                    let new_ratio = new_usage as f32 / context_limit as f32;
+                    
+                    info!(
+                        "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
+                        trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                    );
+                    
+                    // If compression is sufficient, skip further layers
+                    if new_ratio < 0.7 {
+                        estimated_usage = new_usage;
+                        usage_ratio = new_ratio;
+                        // Success, no need for Layer 2
+                    } else {
+                        // Still high pressure, update for Layer 2
+                        usage_ratio = new_ratio;
+                        compression_applied = false; // Allow Layer 2 to run
+                    }
+                }
+            }
+
+            // ===== Layer 2: Thinking Content Compression (L2 threshold) =====
+            // NEW: Preserve signatures while compressing thinking text
+            // This prevents signature chain breakage (Issue #902)
+            if usage_ratio > threshold_l2 && !compression_applied {
                 info!(
-                    "[{}] [ContextManager] Context pressure: {:.1}% ({} / {}), Strategy: {:?} => Purifying history", 
-                    trace_id, usage_ratio * 100.0, estimated_usage, context_limit, strategy
+                    "[{}] [Layer-2] Thinking compression triggered (usage: {:.1}%, threshold: {:.1}%)",
+                    trace_id, usage_ratio * 100.0, threshold_l2 * 100.0
                 );
                 
-                if ContextManager::purify_history(&mut request_with_mapped.messages, strategy) {
-                    is_purified = true;
-                    debug!("[{}] History purified successfully", trace_id);
+                // Use new signature-preserving compression
+                if ContextManager::compress_thinking_preserve_signature(
+                    &mut request_with_mapped.messages, 
+                    4 // Protect last 4 messages (~2 turns)
+                ) {
+                    is_purified = true; // Still breaks cache, but preserves signatures
+                    compression_applied = true;
+                    
+                    let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
+                    let new_usage = calibrator.calibrate(new_raw);
+                    let new_ratio = new_usage as f32 / context_limit as f32;
+                    
+                    info!(
+                        "[{}] [Layer-2] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
+                        trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                    );
+                    
+                    usage_ratio = new_ratio;
+                }
+            }
+
+            // ===== Layer 3: Fork Conversation + XML Summary (L3 threshold) =====
+            // Ultimate optimization: Generate structured summary and start fresh conversation
+            // Advantage: Completely cache-friendly (append-only), extreme compression ratio
+            if usage_ratio > threshold_l3 && !compression_applied {
+                info!(
+                    "[{}] [Layer-3] Context pressure ({:.1}%) exceeded threshold ({:.1}%), attempting Fork+Summary",
+                    trace_id, usage_ratio * 100.0, threshold_l3 * 100.0
+                );
+                
+                // Clone token_manager Arc to avoid borrow issues
+                let token_manager_clone = token_manager.clone();
+                
+                match try_compress_with_summary(&request_with_mapped, &trace_id, &token_manager_clone).await {
+                    Ok(forked_request) => {
+                        info!(
+                            "[{}] [Layer-3] Fork successful: {} → {} messages",
+                            trace_id,
+                            request_with_mapped.messages.len(),
+                            forked_request.messages.len()
+                        );
+                        
+                        request_with_mapped = forked_request;
+                        is_purified = false; // Fork doesn't break cache!
+                        
+                        // Re-estimate after fork (with calibration)
+                        let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
+                        let new_usage = calibrator.calibrate(new_raw);
+                        let new_ratio = new_usage as f32 / context_limit as f32;
+                        
+                        info!(
+                            "[{}] [Layer-3] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
+                            trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "[{}] [Layer-3] Fork+Summary failed: {}, falling back to error response",
+                            trace_id, e
+                        );
+                        
+                        // Return friendly error to user
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "type": "error",
+                                "error": {
+                                    "type": "invalid_request_error",
+                                    "message": format!("Context too long and automatic compression failed: {}", e),
+                                    "suggestion": "Please use /compact or /clear command in Claude Code, or switch to a model with larger context window."
+                                }
+                            }))
+                        ).into_response();
+                    }
                 }
             }
         }
+
+        // [FIX] Estimate AFTER purification to get accurate token count for calibrator learning
+        // Only estimate for calibrator when content was not purified, to avoid skewed learning
+        let raw_estimated = if !is_purified {
+            ContextManager::estimate_token_usage(&request_with_mapped)
+        } else {
+            0 // Don't record calibration data when content was purified
+        };
 
         request_with_mapped.model = mapped_model;
 
@@ -635,12 +813,13 @@ pub async fn handle_messages(
                 // We must pre-read until we find a MEANINGFUL content block (like message_start).
                 // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
                 let mut claude_stream = create_claude_sse_stream(
-                    gemini_stream, 
-                    trace_id.clone(), 
+                    gemini_stream,
+                    trace_id.clone(),
                     email.clone(),
                     Some(session_id_str.clone()),
                     scaling_enabled,
-                    context_limit
+                    context_limit,
+                    Some(raw_estimated) // [FIX] Pass estimated tokens for calibrator learning
                 );
 
                 let mut first_data_chunk = None;
@@ -710,6 +889,7 @@ pub async fn handle_messages(
                                 .header(header::CONTENT_TYPE, "text/event-stream")
                                 .header(header::CACHE_CONTROL, "no-cache")
                                 .header(header::CONNECTION, "keep-alive")
+                                .header("X-Accel-Buffering", "no")
                                 .header("X-Account-Email", &email)
                                 .header("X-Mapped-Model", &request_with_mapped.model)
                                 .header("X-Context-Purified", if is_purified { "true" } else { "false" })
@@ -835,8 +1015,7 @@ pub async fn handle_messages(
                 || error_text.contains("must be 'thinking'")
                 )
         {
-            // Existing logic for thinking signature...
-            retried_without_thinking = true;
+            // Existing logic for thinking signature...\n            retried_without_thinking = true;
             
             // 使用 WARN 级别,因为这不应该经常发生(已经主动过滤过)
             tracing::warn!(
@@ -844,6 +1023,25 @@ pub async fn handle_messages(
                  Retrying with all thinking blocks removed.",
                 trace_id
             );
+
+            // [NEW] 追加修复提示词到最后一条用户消息
+            if let Some(last_msg) = request_for_body.messages.last_mut() {
+                if last_msg.role == "user" {
+                    let repair_prompt = "\n\n[System Recovery] Your previous output contained an invalid signature. Please regenerate the response without the corrupted signature block.";
+                    
+                    match &mut last_msg.content {
+                        crate::proxy::mappers::claude::models::MessageContent::String(s) => {
+                            s.push_str(repair_prompt);
+                        }
+                        crate::proxy::mappers::claude::models::MessageContent::Array(blocks) => {
+                            blocks.push(crate::proxy::mappers::claude::models::ContentBlock::Text {
+                                text: repair_prompt.to_string(),
+                            });
+                        }
+                    }
+                    tracing::debug!("[{}] Appended repair prompt to last user message", trace_id);
+                }
+            }
 
             // [IMPROVED] 不再禁用 Thinking 模式！
             // 既然我们已经将历史 Thinking Block 转换为 Text，那么当前请求可以视为一个新的 Thinking 会话
@@ -1288,7 +1486,203 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
         (
             StatusCode::OK,
             [("X-Warmup-Intercepted", "true")],
-            Json(response)
+
+    
+    Json(response)
         ).into_response()
     }
+}
+
+// ===== [Helper] Synchronous Upstream Call =====
+// Reusable function for making non-streaming calls to Gemini API
+// Used by Layer 3 and potentially other internal operations
+
+/// Call Gemini API synchronously and return the response text
+/// 
+/// This is used for internal operations that need to wait for a complete response,
+/// such as generating summaries or other background tasks.
+async fn call_gemini_sync(
+    model: &str,
+    request: &ClaudeRequest,
+    token_manager: &Arc<crate::proxy::TokenManager>,
+    trace_id: &str,
+) -> Result<String, String> {
+    // Get token and transform request
+    let (access_token, project_id, _) = token_manager
+        .get_token("gemini", false, None, model)
+        .await
+        .map_err(|e| format!("Failed to get account: {}", e))?;
+    
+    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false)
+        .map_err(|e| format!("Failed to transform request: {}", e))?;
+    
+    // Call Gemini API
+    let upstream_url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
+    );
+    
+    debug!("[{}] Calling Gemini API: {}", trace_id, model);
+    
+    let response = reqwest::Client::new()
+        .post(&upstream_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Content-Type", "application/json")
+        .json(&gemini_body)
+        .send()
+        .await
+        .map_err(|e| format!("API call failed: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!(
+            "API returned {}: {}", 
+            response.status(), 
+            response.text().await.unwrap_or_default()
+        ));
+    }
+    
+    let gemini_response: Value = response.json().await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    
+    // Extract text from response
+    gemini_response
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.get(0))
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Failed to extract text from response".to_string())
+}
+
+// ===== [Layer 3] Fork Conversation + XML Summary =====
+// This is the ultimate context compression strategy
+// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
+
+/// Try to compress context by generating an XML summary and forking the conversation
+/// 
+/// This function:
+/// 1. Extracts the last valid thinking signature
+/// 2. Calls a cheap model (gemini-2.5-flash-lite) to generate XML summary
+/// 3. Creates a new message sequence with summary as prefix
+/// 4. Preserves the signature in the summary
+/// 5. Returns the forked request
+/// 
+/// Returns Ok(forked_request) on success, Err(error_message) on failure
+async fn try_compress_with_summary(
+    original_request: &ClaudeRequest,
+    trace_id: &str,
+    token_manager: &Arc<crate::proxy::TokenManager>,
+) -> Result<ClaudeRequest, String> {
+    info!("[{}] [Layer-3] Starting context compression with XML summary", trace_id);
+    
+    // 1. Extract last valid signature
+    let last_signature = ContextManager::extract_last_valid_signature(&original_request.messages);
+    
+    if let Some(ref sig) = last_signature {
+        debug!("[{}] [Layer-3] Extracted signature (len: {})", trace_id, sig.len());
+    }
+    
+    // 2. Build summary request
+    let mut summary_messages = original_request.messages.clone();
+    
+    // Add instruction to include signature in summary
+    let signature_instruction = if let Some(ref sig) = last_signature {
+        format!("\n\n**CRITICAL**: The last thinking signature is:\n```\n{}\n```\nYou MUST include this EXACTLY in the <latest_thinking_signature> section.", sig)
+    } else {
+        "\n\n**Note**: No thinking signature found in history. Leave <latest_thinking_signature> empty.".to_string()
+    };
+    
+    // Append summary request as the last user message
+    summary_messages.push(Message {
+        role: "user".to_string(),
+        content: MessageContent::String(format!(
+            "{}{}",
+            CONTEXT_SUMMARY_PROMPT,
+            signature_instruction
+        )),
+    });
+    
+    let summary_request = ClaudeRequest {
+        model: BACKGROUND_MODEL_LITE.to_string(),
+        messages: summary_messages,
+        system: None,
+        stream: false,
+        max_tokens: Some(8000),
+        temperature: Some(0.3),
+        tools: None,
+        thinking: None,
+        metadata: None,
+        top_p: None,
+        top_k: None,
+        output_config: None,
+        size: None,
+        quality: None,
+    };
+    
+    debug!("[{}] [Layer-3] Calling {} for summary generation", trace_id, BACKGROUND_MODEL_LITE);
+    
+    // 3. Call upstream using helper function (reuse existing infrastructure)
+    let xml_summary = call_gemini_sync(
+        BACKGROUND_MODEL_LITE,
+        &summary_request,
+        token_manager,
+        trace_id,
+    ).await?;
+    
+    info!("[{}] [Layer-3] Generated XML summary (len: {} chars)", trace_id, xml_summary.len());
+    
+    // 4. Create forked conversation with summary as prefix
+    let mut forked_messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: MessageContent::String(format!(
+                "Context has been compressed. Here is the structured summary of our conversation history:\n\n{}",
+                xml_summary
+            )),
+        },
+        Message {
+            role: "assistant".to_string(),
+            content: MessageContent::String(
+                "I have reviewed the compressed context summary. I understand the current state and will continue from here.".to_string()
+            ),
+        },
+    ];
+    
+    // 5. Append the user's latest message (if exists and is not the summary request)
+    if let Some(last_msg) = original_request.messages.last() {
+        if last_msg.role == "user" {
+            // Check if it's not the summary instruction we just added
+            if !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT)) {
+                forked_messages.push(last_msg.clone());
+            }
+        }
+    }
+    
+    info!(
+        "[{}] [Layer-3] Fork successful: {} messages → {} messages",
+        trace_id,
+        original_request.messages.len(),
+        forked_messages.len()
+    );
+    
+    // 6. Return forked request
+    Ok(ClaudeRequest {
+        model: original_request.model.clone(),
+        messages: forked_messages,
+        system: original_request.system.clone(),
+        stream: original_request.stream,
+        max_tokens: original_request.max_tokens,
+        temperature: original_request.temperature,
+        tools: original_request.tools.clone(),
+        thinking: original_request.thinking.clone(),
+        metadata: original_request.metadata.clone(),
+        top_p: original_request.top_p,
+        top_k: original_request.top_k,
+        output_config: original_request.output_config.clone(),
+        size: original_request.size.clone(),
+        quality: original_request.quality.clone(),
+    })
 }

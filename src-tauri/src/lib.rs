@@ -75,6 +75,7 @@ pub fn run() {
                 });
         }))
         .manage(commands::proxy::ProxyServiceState::new())
+        .manage(commands::cloudflared::CloudflaredState::new())
         .setup(|app| {
             info!("Setup starting...");
 
@@ -246,10 +247,21 @@ pub fn run() {
             commands::get_token_stats_weekly,
             commands::get_token_stats_by_account,
             commands::get_token_stats_summary,
+            commands::get_token_stats_by_model,
+            commands::get_token_stats_model_trend_hourly,
+            commands::get_token_stats_model_trend_daily,
+            commands::get_token_stats_account_trend_hourly,
+            commands::get_token_stats_account_trend_daily,
             proxy::cli_sync::get_cli_sync_status,
             proxy::cli_sync::execute_cli_sync,
             proxy::cli_sync::execute_cli_restore,
             proxy::cli_sync::get_cli_config_content,
+            // Cloudflared commands
+            commands::cloudflared::cloudflared_check,
+            commands::cloudflared::cloudflared_install,
+            commands::cloudflared::cloudflared_start,
+            commands::cloudflared::cloudflared_stop,
+            commands::cloudflared::cloudflared_get_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

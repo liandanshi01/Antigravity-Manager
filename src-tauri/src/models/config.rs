@@ -79,6 +79,7 @@ fn default_monitored_models() -> Vec<String> {
         "claude-sonnet-4-5".to_string(),
         "gemini-3-pro-high".to_string(),
         "gemini-3-flash".to_string(),
+        "gemini-3-pro-image".to_string(),
     ]
 }
 

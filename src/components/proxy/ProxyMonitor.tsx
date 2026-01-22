@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
-import { Trash2, Search, X, Copy, CheckCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Trash2, Search, X, Copy, CheckCircle, ChevronLeft, ChevronRight, RefreshCw, User } from 'lucide-react';
 
 import { AppConfig } from '../../types/config';
 import { formatCompactNumber } from '../../utils/format';
+import { useAccountStore } from '../../stores/useAccountStore';
 
 
 interface ProxyRequestLog {
@@ -100,7 +101,7 @@ const LogTable: React.FC<LogTableProps> = ({
                                     </span>
                                 )}
                             </td>
-                            <td className="text-gray-600 dark:text-gray-400 truncate text-[10px]" style={{ width: '140px', maxWidth: '140px' }}>
+                            <td className="text-gray-600 dark:text-gray-400 truncate text-[10px]" style={{ width: '140px', maxWidth: '140px' }} title={log.account_email || ''}>
                                 {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
                             </td>
                             <td className="truncate" style={{ width: '180px', maxWidth: '180px' }}>{log.url}</td>
@@ -141,10 +142,13 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const [logs, setLogs] = useState<ProxyRequestLog[]>([]);
     const [stats, setStats] = useState<ProxyStats>({ total_requests: 0, success_count: 0, error_count: 0 });
     const [filter, setFilter] = useState('');
+    const [accountFilter, setAccountFilter] = useState('');
     const [selectedLog, setSelectedLog] = useState<ProxyRequestLog | null>(null);
     const [isLoggingEnabled, setIsLoggingEnabled] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
     const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
+
+    const { accounts, fetchAccounts } = useAccountStore();
 
     // Pagination state
     const PAGE_SIZE_OPTIONS = [50, 100, 200, 500];
@@ -154,7 +158,20 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const [loading, setLoading] = useState(false);
     const [loadingDetail, setLoadingDetail] = useState(false);
 
-    const loadData = async (page = 1, searchFilter = filter) => {
+    const uniqueAccounts = useMemo(() => {
+        const emailSet = new Set<string>();
+        logs.forEach(log => {
+            if (log.account_email) {
+                emailSet.add(log.account_email);
+            }
+        });
+        accounts.forEach(acc => {
+            emailSet.add(acc.email);
+        });
+        return Array.from(emailSet).sort();
+    }, [logs, accounts]);
+
+    const loadData = async (page = 1, searchFilter = filter, accountEmailFilter = accountFilter) => {
         if (loading) return;
         setLoading(true);
 
@@ -174,9 +191,11 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 await invoke('set_proxy_monitor_enabled', { enabled: config.proxy.enable_logging });
             }
 
-            // Determine if filtering by errors only
             const errorsOnly = searchFilter === '__ERROR__';
-            const actualFilter = errorsOnly ? '' : searchFilter;
+            const baseFilter = errorsOnly ? '' : searchFilter;
+            const actualFilter = accountEmailFilter
+                ? (baseFilter ? `${baseFilter} ${accountEmailFilter}` : accountEmailFilter)
+                : baseFilter;
 
             // Get count with filter
             const count = await Promise.race([
@@ -228,7 +247,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const goToPage = (page: number) => {
         if (page >= 1 && page <= totalPages && page !== currentPage) {
             setCurrentPage(page);
-            loadData(page, filter);
+            loadData(page, filter, accountFilter);
         }
     };
 
@@ -254,7 +273,8 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     useEffect(() => {
         isMountedRef.current = true;
         loadData();
-        
+        fetchAccounts();
+
         let unlistenFn: (() => void) | null = null;
         let updateTimeout: number | null = null;
 
@@ -341,18 +361,21 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     // Reload when pageSize changes
     useEffect(() => {
         setCurrentPage(1);
-        loadData(1, filter);
+        loadData(1, filter, accountFilter);
     }, [pageSize]);
 
     // Reload when filter changes (search based on all logs)
     useEffect(() => {
         setCurrentPage(1);
-        loadData(1, filter);
-    }, [filter]);
+        loadData(1, filter, accountFilter);
+    }, [filter, accountFilter]);
 
     // Logs are already filtered and sorted by backend
-    // Just use logs directly as filteredLogs for compatibility
-    const filteredLogs = logs;
+    // Apply account filter on frontend
+    const filteredLogs = useMemo(() => {
+        if (!accountFilter) return logs;
+        return logs.filter(log => log.account_email === accountFilter);
+    }, [logs, accountFilter]);
 
     const quickFilters = [
         { label: t('monitor.filters.all'), value: '' },
@@ -437,6 +460,23 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                         />
                     </div>
 
+                    <div className="relative">
+                        <User className="absolute left-2.5 top-2 text-gray-400 z-10" size={14} />
+                        <select
+                            className="select select-sm select-bordered pl-8 text-xs min-w-[140px] max-w-[220px]"
+                            value={accountFilter}
+                            onChange={(e) => setAccountFilter(e.target.value)}
+                            title={t('monitor.filters.by_account')}
+                        >
+                            <option value="">{t('monitor.filters.all_accounts')}</option>
+                            {uniqueAccounts.map(email => (
+                                <option key={email} value={email} title={email}>
+                                    {email}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     <div className="hidden lg:flex gap-4 text-[10px] font-bold uppercase">
                         <span className="text-blue-500">{formatCompactNumber(stats.total_requests)} REQS</span>
                         <span className="text-green-500">{formatCompactNumber(stats.success_count)} OK</span>
@@ -458,7 +498,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             {q.label}
                         </button>
                     ))}
-                    {filter && <button onClick={() => setFilter('')} className="text-[10px] text-blue-500"> {t('monitor.filters.reset')} </button>}
+                    {(filter || accountFilter) && <button onClick={() => { setFilter(''); setAccountFilter(''); }} className="text-[10px] text-blue-500"> {t('monitor.filters.reset')} </button>}
                 </div>
             </div>
 
