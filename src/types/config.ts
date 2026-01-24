@@ -3,12 +3,17 @@ export interface UpstreamProxyConfig {
     url: string;
 }
 
+export interface ApiKeyEntry {
+    key: string;
+    accounts?: string[];
+}
+
 export interface ProxyConfig {
     enabled: boolean;
     allow_lan_access?: boolean;
     auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
     port: number;
-    api_keys: string[];
+    api_keys: (string | ApiKeyEntry)[];
     auto_start: boolean;
     custom_mapping?: Record<string, string>;
     request_timeout: number;

@@ -1,9 +1,9 @@
-use crate::proxy::config::{ProxyAuthMode, ProxyConfig};
+use crate::proxy::config::{ApiKeyEntry, ProxyAuthMode, ProxyConfig};
 
 #[derive(Debug, Clone)]
 pub struct ProxySecurityConfig {
     pub auth_mode: ProxyAuthMode,
-    pub api_keys: Vec<String>,
+    pub api_keys: Vec<ApiKeyEntry>,
     pub allow_lan_access: bool,
 }
 
@@ -38,7 +38,7 @@ mod tests {
     fn auto_mode_resolves_off_for_local_only() {
         let s = ProxySecurityConfig {
             auth_mode: ProxyAuthMode::Auto,
-            api_keys: vec!["sk-test".to_string()],
+            api_keys: vec![ApiKeyEntry::Simple("sk-test".to_string())],
             allow_lan_access: false,
         };
         assert!(matches!(s.effective_auth_mode(), ProxyAuthMode::Off));
@@ -48,7 +48,7 @@ mod tests {
     fn auto_mode_resolves_all_except_health_for_lan() {
         let s = ProxySecurityConfig {
             auth_mode: ProxyAuthMode::Auto,
-            api_keys: vec!["sk-test".to_string()],
+            api_keys: vec![ApiKeyEntry::Simple("sk-test".to_string())],
             allow_lan_access: true,
         };
         assert!(matches!(

@@ -242,9 +242,11 @@ fn should_rotate_account(status_code: u16) -> bool {
 /// 处理 Chat 消息请求流程
 pub async fn handle_messages(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    headers: axum::http::HeaderMap,
+    axum::Extension(allowed_accounts_ext): axum::Extension<Option<crate::proxy::middleware::auth::AllowedAccounts>>,
     Json(body): Json<Value>,
 ) -> Response {
+    let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
     tracing::debug!("handle_messages called. Body JSON len: {}", body.to_string().len());
     
     // 生成随机 Trace ID 用户追踪
@@ -520,7 +522,7 @@ pub async fn handle_messages(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
+        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model, allowed_accounts).await {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -685,7 +687,7 @@ pub async fn handle_messages(
                 // Clone token_manager Arc to avoid borrow issues
                 let token_manager_clone = token_manager.clone();
                 
-                match try_compress_with_summary(&request_with_mapped, &trace_id, &token_manager_clone).await {
+                match try_compress_with_summary(&request_with_mapped, &trace_id, &token_manager_clone, allowed_accounts).await {
                     Ok(forked_request) => {
                         info!(
                             "[{}] [Layer-3] Fork successful: {} → {} messages",
@@ -1506,10 +1508,11 @@ async fn call_gemini_sync(
     request: &ClaudeRequest,
     token_manager: &Arc<crate::proxy::TokenManager>,
     trace_id: &str,
+    allowed_accounts: Option<&Vec<String>>,
 ) -> Result<String, String> {
     // Get token and transform request
     let (access_token, project_id, _) = token_manager
-        .get_token("gemini", false, None, model)
+        .get_token("gemini", false, None, model, allowed_accounts)
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
     
@@ -1575,6 +1578,7 @@ async fn try_compress_with_summary(
     original_request: &ClaudeRequest,
     trace_id: &str,
     token_manager: &Arc<crate::proxy::TokenManager>,
+    allowed_accounts: Option<&Vec<String>>,
 ) -> Result<ClaudeRequest, String> {
     info!("[{}] [Layer-3] Starting context compression with XML summary", trace_id);
     
@@ -1630,6 +1634,7 @@ async fn try_compress_with_summary(
         &summary_request,
         token_manager,
         trace_id,
+        allowed_accounts,
     ).await?;
     
     info!("[{}] [Layer-3] Generated XML summary (len: {} chars)", trace_id, xml_summary.len());

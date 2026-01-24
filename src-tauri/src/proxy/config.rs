@@ -11,6 +11,33 @@ pub enum ProxyAuthMode {
     Auto,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ApiKeyEntry {
+    Simple(String),
+    Mapped {
+        key: String,
+        #[serde(default)]
+        accounts: Vec<String>,
+    },
+}
+
+impl ApiKeyEntry {
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Simple(k) => k,
+            Self::Mapped { key, .. } => key,
+        }
+    }
+
+    pub fn accounts(&self) -> Option<&Vec<String>> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Mapped { accounts, .. } => Some(accounts),
+        }
+    }
+}
+
 impl Default for ProxyAuthMode {
     fn default() -> Self {
         Self::Off
@@ -163,9 +190,15 @@ impl Default for ExperimentalConfig {
     }
 }
 
-fn default_threshold_l1() -> f32 { 0.4 }
-fn default_threshold_l2() -> f32 { 0.55 }
-fn default_threshold_l3() -> f32 { 0.7 }
+fn default_threshold_l1() -> f32 {
+    0.4
+}
+fn default_threshold_l2() -> f32 {
+    0.55
+}
+fn default_threshold_l3() -> f32 {
+    0.7
+}
 
 fn default_true() -> bool {
     true
@@ -196,7 +229,7 @@ pub struct ProxyConfig {
 
     /// API 密钥列表（支持多个密钥）
     #[serde(default, deserialize_with = "deserialize_api_keys")]
-    pub api_keys: Vec<String>,
+    pub api_keys: Vec<ApiKeyEntry>,
 
     /// 是否自动启动
     pub auto_start: bool,
@@ -246,7 +279,10 @@ impl Default for ProxyConfig {
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             auth_mode: ProxyAuthMode::default(),
             port: 8045,
-            api_keys: vec![format!("sk-{}", uuid::Uuid::new_v4().simple())],
+            api_keys: vec![ApiKeyEntry::Simple(format!(
+                "sk-{}",
+                uuid::Uuid::new_v4().simple()
+            ))],
             auto_start: false,
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
@@ -293,7 +329,7 @@ impl ProxyConfig {
 }
 
 /// 自定义反序列化器：支持旧版单个 api_key 字符串和新版 api_keys 数组
-fn deserialize_api_keys<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+fn deserialize_api_keys<'de, D>(deserializer: D) -> Result<Vec<ApiKeyEntry>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -302,10 +338,10 @@ where
     struct ApiKeysVisitor;
 
     impl<'de> Visitor<'de> for ApiKeysVisitor {
-        type Value = Vec<String>;
+        type Value = Vec<ApiKeyEntry>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or array of strings")
+            formatter.write_str("a string, an array of strings, or an array of api key objects")
         }
 
         // 处理单个字符串（旧版格式）
@@ -316,20 +352,18 @@ where
             if value.is_empty() {
                 Ok(Vec::new())
             } else {
-                Ok(vec![value.to_string()])
+                Ok(vec![ApiKeyEntry::Simple(value.to_string())])
             }
         }
 
-        // 处理字符串数组（新版格式）
+        // 处理数组（新版格式，支持字符串或对象）
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
         where
             A: de::SeqAccess<'de>,
         {
             let mut keys = Vec::new();
-            while let Some(key) = seq.next_element::<String>()? {
-                if !key.is_empty() {
-                    keys.push(key);
-                }
+            while let Some(entry) = seq.next_element::<ApiKeyEntry>()? {
+                keys.push(entry);
             }
             Ok(keys)
         }
