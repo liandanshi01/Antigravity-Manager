@@ -1,6 +1,6 @@
 // 模型名称映射
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -46,11 +46,10 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3-pro-low", "gemini-3-pro-preview");
     m.insert("gemini-3-pro-high", "gemini-3-pro-preview");
     m.insert("gemini-3-pro-preview", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro", "gemini-3-pro-preview");  // 统一映射到 preview
+    m.insert("gemini-3-pro", "gemini-3-pro-preview"); // 统一映射到 preview
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
     m.insert("gemini-3-flash", "gemini-3-flash");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
-
 
     m
 });
@@ -103,12 +102,12 @@ pub async fn get_all_dynamic_models(
 
     // 5. 确保包含常用的 Gemini/画画模型 ID
     model_ids.insert("gemini-3-pro-low".to_string());
-    
+
     // [NEW] Issue #247: Dynamically generate all Image Gen Combinations
     let base = "gemini-3-pro-image";
     let resolutions = vec!["", "-2k", "-4k"];
     let ratios = vec!["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
-    
+
     for res in resolutions {
         for ratio in ratios.iter() {
             let mut id = base.to_string();
@@ -120,11 +119,10 @@ pub async fn get_all_dynamic_models(
 
     model_ids.insert("gemini-2.0-flash-exp".to_string());
     model_ids.insert("gemini-2.5-flash".to_string());
-    // gemini-2.5-pro removed 
+    // gemini-2.5-pro removed
     model_ids.insert("gemini-3-flash".to_string());
     model_ids.insert("gemini-3-pro-high".to_string());
     model_ids.insert("gemini-3-pro-low".to_string());
-
 
     let mut sorted_ids: Vec<_> = model_ids.into_iter().collect();
     sorted_ids.sort();
@@ -179,11 +177,11 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 
 /// 核心模型路由解析引擎
 /// 优先级：精确匹配 > 通配符匹配 > 系统默认映射
-/// 
+///
 /// # 参数
 /// - `original_model`: 原始模型名称
 /// - `custom_mapping`: 用户自定义映射表
-/// 
+///
 /// # 返回
 /// 映射后的目标模型名称
 pub fn resolve_model_route(
@@ -192,10 +190,13 @@ pub fn resolve_model_route(
 ) -> String {
     // 1. 精确匹配 (最高优先级)
     if let Some(target) = custom_mapping.get(original_model) {
-        crate::modules::logger::log_info(&format!("[Router] 精确映射: {} -> {}", original_model, target));
+        crate::modules::logger::log_info(&format!(
+            "[Router] 精确映射: {} -> {}",
+            original_model, target
+        ));
         return target.clone();
     }
-    
+
     // 2. Wildcard match - most specific (highest non-wildcard chars) wins
     // Note: When multiple patterns have the SAME specificity, HashMap iteration order
     // determines the result (non-deterministic). Users can avoid this by making patterns
@@ -218,11 +219,14 @@ pub fn resolve_model_route(
         ));
         return target.to_string();
     }
-    
+
     // 3. 系统默认映射
     let result = map_claude_model_to_gemini(original_model);
     if result != original_model {
-        crate::modules::logger::log_info(&format!("[Router] 系统默认映射: {} -> {}", original_model, result));
+        crate::modules::logger::log_info(&format!(
+            "[Router] 系统默认映射: {} -> {}",
+            original_model, result
+        ));
     }
     result
 }
@@ -244,7 +248,7 @@ pub const QUOTA_FALLBACK_MODEL: &str = "gemini-3-pro-high";
 /// - `None`: 该模型不支持降级（已经是 gemini-3-pro-high 或图片生成模型）
 ///
 /// # 示例
-/// ```
+/// ```ignore
 /// assert_eq!(get_quota_fallback("claude-sonnet-4-5"), Some("gemini-3-pro-high"));
 /// assert_eq!(get_quota_fallback("gemini-3-flash"), Some("gemini-3-pro-high"));
 /// assert_eq!(get_quota_fallback("gemini-3-pro-high"), None);  // 已是目标，不降级
@@ -259,8 +263,7 @@ pub fn get_quota_fallback(model_name: &str) -> Option<&'static str> {
     }
 
     // 2. 已经是降级目标，不再降级
-    let normalized = normalize_to_standard_id(model_name)
-        .unwrap_or_else(|| model_name.to_string());
+    let normalized = normalize_to_standard_id(model_name).unwrap_or_else(|| model_name.to_string());
 
     if normalized == QUOTA_FALLBACK_MODEL {
         return None;
@@ -274,12 +277,12 @@ pub fn get_quota_fallback(model_name: &str) -> Option<&'static str> {
 
 /// Normalize any physical model name to one of the 3 standard protection IDs.
 /// This ensures quota protection works consistently regardless of API versioning or request variations.
-/// 
+///
 /// Standard IDs:
 /// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
 /// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
 /// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
-/// 
+///
 /// Returns `None` if the model doesn't match any of the 3 protected categories.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     // [FIX] Strict matching based on user-defined groups (Case Insensitive)
@@ -292,9 +295,11 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         "gemini-3-pro-high" | "gemini-3-pro-low" => Some("gemini-3-pro-high".to_string()),
 
         // Claude 4.5 Sonnet Group
-        "claude-sonnet-4-5" | "claude-sonnet-4-5-thinking" | "claude-opus-4-5-thinking" => Some("claude-sonnet-4-5".to_string()),
+        "claude-sonnet-4-5" | "claude-sonnet-4-5-thinking" | "claude-opus-4-5-thinking" => {
+            Some("claude-sonnet-4-5".to_string())
+        }
 
-        _ => None
+        _ => None,
     }
 }
 
@@ -329,20 +334,32 @@ mod tests {
         custom.insert("gpt*".to_string(), "fallback".to_string());
         custom.insert("gpt-4*".to_string(), "specific".to_string());
         custom.insert("claude-opus-*".to_string(), "opus-default".to_string());
-        custom.insert("claude-opus*thinking".to_string(), "opus-thinking".to_string());
+        custom.insert(
+            "claude-opus*thinking".to_string(),
+            "opus-thinking".to_string(),
+        );
 
         // More specific pattern wins
         assert_eq!(resolve_model_route("gpt-4-turbo", &custom), "specific");
         assert_eq!(resolve_model_route("gpt-3.5", &custom), "fallback");
         // Suffix constraint is more specific than prefix-only
-        assert_eq!(resolve_model_route("claude-opus-4-5-thinking", &custom), "opus-thinking");
-        assert_eq!(resolve_model_route("claude-opus-4", &custom), "opus-default");
+        assert_eq!(
+            resolve_model_route("claude-opus-4-5-thinking", &custom),
+            "opus-thinking"
+        );
+        assert_eq!(
+            resolve_model_route("claude-opus-4", &custom),
+            "opus-default"
+        );
     }
 
     #[test]
     fn test_multi_wildcard_support() {
         let mut custom = HashMap::new();
-        custom.insert("claude-*-sonnet-*".to_string(), "sonnet-versioned".to_string());
+        custom.insert(
+            "claude-*-sonnet-*".to_string(),
+            "sonnet-versioned".to_string(),
+        );
         custom.insert("gpt-*-*".to_string(), "gpt-multi".to_string());
         custom.insert("*thinking*".to_string(), "has-thinking".to_string());
 
@@ -363,7 +380,7 @@ mod tests {
         // Negative case: *thinking* should NOT match models without "thinking"
         assert_eq!(
             resolve_model_route("random-model-name", &custom),
-            "claude-sonnet-4-5"  // Falls back to system default
+            "claude-sonnet-4-5" // Falls back to system default
         );
     }
 
@@ -375,7 +392,10 @@ mod tests {
         custom.insert("a*b*c".to_string(), "multi-wild".to_string());
 
         // Specificity: "prefix*" (6) > "*" (0)
-        assert_eq!(resolve_model_route("prefix-anything", &custom), "prefix-match");
+        assert_eq!(
+            resolve_model_route("prefix-anything", &custom),
+            "prefix-match"
+        );
         // Catch-all has lowest specificity
         assert_eq!(resolve_model_route("random-model", &custom), "catch-all");
         // Multi-wildcard: "a*b*c" (3)
