@@ -16,9 +16,11 @@ pub async fn handle_audio_transcription(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
     let mut audio_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut model = "gemini-2.0-flash-exp".to_string();
@@ -99,10 +101,19 @@ pub async fn handle_audio_transcription(
         }]
     });
 
+    let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     // 6. 获取 Token 和上游客户端
     let token_manager = state.token_manager;
-    let (access_token, project_id, email) = token_manager
-        .get_token("text", false, None, &model, allowed_accounts)
+    let (access_token, project_id, email, _actual_model) = token_manager
+        .get_token(
+            "text",
+            false,
+            None,
+            &model,
+            allowed_accounts,
+            fallback_enabled,
+        )
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
 

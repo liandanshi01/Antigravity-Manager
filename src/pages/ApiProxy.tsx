@@ -165,6 +165,7 @@ export default function ApiProxy() {
     const [newApiKeyInput, setNewApiKeyInput] = useState('');
     const [isAddingNewKey, setIsAddingNewKey] = useState(false);
     const [tempAccountSelection, setTempAccountSelection] = useState<string[]>([]);
+    const [tempFallbackEnabled, setTempFallbackEnabled] = useState<boolean>(true);
 
     // Modal states
     const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
@@ -658,6 +659,10 @@ export default function ApiProxy() {
         return typeof entry === 'string' ? undefined : entry.accounts;
     };
 
+    const getKeyFallbackEnabled = (entry: string | ApiKeyEntry): boolean => {
+        return typeof entry === 'string' ? true : (entry.fallback_enabled ?? true);
+    };
+
     const validateApiKey = (key: string): boolean => {
         // Must start with 'sk-' and be at least 10 characters long
         return key.startsWith('sk-') && key.length >= 10;
@@ -668,6 +673,7 @@ export default function ApiProxy() {
         const entry = keys[index];
         setTempApiKey(getKeyString(entry));
         setTempAccountSelection(getKeyAccounts(entry) || []);
+        setTempFallbackEnabled(getKeyFallbackEnabled(entry));
         setEditingKeyIndex(index);
         setIsEditingApiKey(true);
     };
@@ -679,9 +685,14 @@ export default function ApiProxy() {
         }
         if (editingKeyIndex !== null && appConfig) {
             const newKeys = [...(appConfig.proxy.api_keys || [])];
-            // Construct the new entry based on account selection
-            if (tempAccountSelection.length > 0) {
-                newKeys[editingKeyIndex] = { key: tempApiKey, accounts: tempAccountSelection };
+            // Construct the new entry based on account selection and fallback setting
+            // We use the object format if either accounts or fallback_enabled (non-default) are set
+            if (tempAccountSelection.length > 0 || !tempFallbackEnabled) {
+                newKeys[editingKeyIndex] = {
+                    key: tempApiKey,
+                    accounts: tempAccountSelection.length > 0 ? tempAccountSelection : undefined,
+                    fallback_enabled: tempFallbackEnabled
+                };
             } else {
                 newKeys[editingKeyIndex] = tempApiKey;
             }
@@ -692,11 +703,13 @@ export default function ApiProxy() {
         setEditingKeyIndex(null);
         setTempApiKey('');
         setTempAccountSelection([]);
+        setTempFallbackEnabled(true);
     };
 
     const handleCancelEditApiKey = () => {
         setTempApiKey('');
         setTempAccountSelection([]);
+        setTempFallbackEnabled(true);
         setIsEditingApiKey(false);
         setEditingKeyIndex(null);
     };
@@ -1166,6 +1179,20 @@ print(response.text)`;
                                                                         )}
                                                                     </div>
                                                                 </div>
+                                                                <div className="flex items-center justify-between px-2 py-1 bg-gray-50 dark:bg-base-300 rounded-lg border border-gray-200 dark:border-base-200">
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
+                                                                            Model Fallback
+                                                                            <HelpTooltip text="Automatically downgrade to a cheaper model if the requested one is out of quota." placement="right" />
+                                                                        </span>
+                                                                    </div>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        className="toggle toggle-xs border-gray-300 dark:border-gray-600 checked:bg-blue-500"
+                                                                        checked={tempFallbackEnabled}
+                                                                        onChange={(e) => setTempFallbackEnabled(e.target.checked)}
+                                                                    />
+                                                                </div>
                                                             </div>
                                                             <button
                                                                 onClick={handleSaveApiKey}
@@ -1221,11 +1248,18 @@ print(response.text)`;
                                                         </>
                                                     )}
                                                 </div>
-                                                {!isEditingApiKey && isRestricted && (
-                                                    <div className="ml-1 flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-500">
-                                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                                                            🔒 Restricted to {keyAccounts.length} account{keyAccounts.length > 1 ? 's' : ''}: {keyAccounts.slice(0, 2).join(', ')}{keyAccounts.length > 2 ? ` +${keyAccounts.length - 2} more` : ''}
-                                                        </span>
+                                                {!isEditingApiKey && (isRestricted || !getKeyFallbackEnabled(keyEntry)) && (
+                                                    <div className="ml-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                                        {isRestricted && (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-500">
+                                                                🔒 Restricted to {keyAccounts.length} account{keyAccounts.length > 1 ? 's' : ''}: {keyAccounts.slice(0, 2).join(', ')}{keyAccounts.length > 2 ? ` +${keyAccounts.length - 2} more` : ''}
+                                                            </span>
+                                                        )}
+                                                        {!getKeyFallbackEnabled(keyEntry) && (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-500 font-medium">
+                                                                🚫 No Fallback
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>

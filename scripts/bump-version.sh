@@ -163,9 +163,19 @@ if [[ "$DRY_RUN" == false ]]; then
             fi
             
             echo ""
-            echo -e "${YELLOW}提示: 使用以下命令推送到远程:${NC}"
-            echo "  git push origin feature/mut-key"
-            echo "  git push origin v${NEW_VERSION}"
+            echo "推送到远程仓库..."
+            # 获取当前分支名
+            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+            
+            # 推送当前分支
+            echo "  推送分支 ${CURRENT_BRANCH}..."
+            git push origin "${CURRENT_BRANCH}"
+            echo -e "  ${GREEN}✓${NC} 分支已推送"
+            
+            # 推送 tag
+            echo "  推送 tag v${NEW_VERSION}..."
+            git push origin "v${NEW_VERSION}"
+            echo -e "  ${GREEN}✓${NC} Tag 已推送"
         fi
     fi
 fi

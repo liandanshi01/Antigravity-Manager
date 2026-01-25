@@ -244,9 +244,11 @@ pub async fn handle_messages(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     axum::Extension(allowed_accounts_ext): axum::Extension<Option<crate::proxy::middleware::auth::AllowedAccounts>>,
+    axum::Extension(fallback_config_ext): axum::Extension<Option<crate::proxy::middleware::auth::FallbackConfig>>,
     Json(body): Json<Value>,
 ) -> Response {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     tracing::debug!("handle_messages called. Body JSON len: {}", body.to_string().len());
     
     // 生成随机 Trace ID 用户追踪
@@ -522,7 +524,17 @@ pub async fn handle_messages(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model, allowed_accounts).await {
+        let (access_token, project_id, email, actual_model) = match token_manager
+            .get_token(
+                &config.request_type,
+                force_rotate_token,
+                session_id,
+                &config.final_model,
+                allowed_accounts,
+                fallback_enabled,
+            )
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -545,6 +557,17 @@ pub async fn handle_messages(
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
+
+        // [NEW] 使用降级后的实际模型名（配额保护降级）
+        if actual_model != config.final_model {
+            info!(
+                "[{}] 🔄 Model downgraded due to quota protection: {} -> {}",
+                trace_id,
+                config.final_model,
+                actual_model
+            );
+            mapped_model = actual_model;
+        }
         
         
         // ===== 【优化】后台任务智能检测与降级 =====
@@ -686,8 +709,16 @@ pub async fn handle_messages(
                 
                 // Clone token_manager Arc to avoid borrow issues
                 let token_manager_clone = token_manager.clone();
-                
-                match try_compress_with_summary(&request_with_mapped, &trace_id, &token_manager_clone, allowed_accounts).await {
+
+                match try_compress_with_summary(
+                    &request_with_mapped,
+                    &trace_id,
+                    &token_manager_clone,
+                    allowed_accounts,
+                    fallback_enabled,
+                )
+                .await
+                {
                     Ok(forked_request) => {
                         info!(
                             "[{}] [Layer-3] Fork successful: {} → {} messages",
@@ -1509,10 +1540,18 @@ async fn call_gemini_sync(
     token_manager: &Arc<crate::proxy::TokenManager>,
     trace_id: &str,
     allowed_accounts: Option<&Vec<String>>,
+    fallback_enabled: bool,
 ) -> Result<String, String> {
     // Get token and transform request
-    let (access_token, project_id, _) = token_manager
-        .get_token("gemini", false, None, model, allowed_accounts)
+    let (access_token, project_id, _, _actual_model) = token_manager
+        .get_token(
+            "gemini",
+            false,
+            None,
+            model,
+            allowed_accounts,
+            fallback_enabled,
+        )
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
     
@@ -1579,6 +1618,7 @@ async fn try_compress_with_summary(
     trace_id: &str,
     token_manager: &Arc<crate::proxy::TokenManager>,
     allowed_accounts: Option<&Vec<String>>,
+    fallback_enabled: bool,
 ) -> Result<ClaudeRequest, String> {
     info!("[{}] [Layer-3] Starting context compression with XML summary", trace_id);
     
@@ -1635,6 +1675,7 @@ async fn try_compress_with_summary(
         token_manager,
         trace_id,
         allowed_accounts,
+        fallback_enabled,
     ).await?;
     
     info!("[{}] [Layer-3] Generated XML summary (len: {} chars)", trace_id, xml_summary.len());

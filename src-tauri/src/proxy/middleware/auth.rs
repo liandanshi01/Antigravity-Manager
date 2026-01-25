@@ -16,6 +16,10 @@ use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
 #[derive(Debug, Clone)]
 pub struct AllowedAccounts(pub Vec<String>);
 
+/// 是否启用模型降级（存储在 Request Extensions 中）
+#[derive(Debug, Clone)]
+pub struct FallbackConfig(pub bool);
+
 /// API Key 认证中间件
 pub async fn auth_middleware(
     State(security): State<Arc<RwLock<ProxySecurityConfig>>>,
@@ -41,10 +45,24 @@ pub async fn auth_middleware(
     let effective_mode = security.effective_auth_mode();
 
     if matches!(effective_mode, ProxyAuthMode::Off) {
+        let mut request = request;
+        request
+            .extensions_mut()
+            .insert(Option::<AllowedAccounts>::None);
+        request
+            .extensions_mut()
+            .insert(Option::<FallbackConfig>::None);
         return Ok(next.run(request).await);
     }
 
     if matches!(effective_mode, ProxyAuthMode::AllExceptHealth) && path == "/healthz" {
+        let mut request = request;
+        request
+            .extensions_mut()
+            .insert(Option::<AllowedAccounts>::None);
+        request
+            .extensions_mut()
+            .insert(Option::<FallbackConfig>::None);
         return Ok(next.run(request).await);
     }
 
@@ -86,6 +104,12 @@ pub async fn auth_middleware(
             _ => None,
         };
         request.extensions_mut().insert(allowed_accounts);
+
+        // 插入模型降级配置
+        request
+            .extensions_mut()
+            .insert(Some(FallbackConfig(entry.fallback_enabled())));
+
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::UNAUTHORIZED)

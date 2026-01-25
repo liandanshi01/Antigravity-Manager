@@ -103,9 +103,13 @@ pub async fn handle_chat_completions(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     // [NEW] 自动检测并转换 Responses 格式
     // 如果请求包含 instructions 或 input 但没有 messages，则认为是 Responses 格式
     let is_responses_format = !body.get("messages").is_some()
@@ -211,13 +215,14 @@ pub async fn handle_chat_completions(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email) = match token_manager
+        let (access_token, project_id, email, _actual_model) = match token_manager
             .get_token(
                 &config.request_type,
                 attempt > 0,
                 Some(&session_id),
                 &openai_req.model,
                 allowed_accounts,
+                fallback_enabled,
             )
             .await
         {
@@ -557,9 +562,13 @@ pub async fn handle_completions(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     Json(mut body): Json<Value>,
 ) -> Response {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     info!(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
@@ -970,13 +979,14 @@ pub async fn handle_completions(
         // 重试时强制轮换，除非只是简单的网络抖动但 Claude 逻辑里 attempt > 0 总是 force_rotate
         let force_rotate = attempt > 0;
 
-        let (access_token, project_id, email) = match token_manager
+        let (access_token, project_id, email, _actual_model) = match token_manager
             .get_token(
                 &config.request_type,
                 force_rotate,
                 session_id,
                 &openai_req.model,
                 allowed_accounts,
+                fallback_enabled,
             )
             .await
         {
@@ -1284,9 +1294,13 @@ pub async fn handle_images_generations(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     // 1. 解析请求参数
     let prompt = body.get("prompt").and_then(|v| v.as_str()).ok_or((
         StatusCode::BAD_REQUEST,
@@ -1351,8 +1365,15 @@ pub async fn handle_images_generations(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
 
-    let (access_token, project_id, email) = match token_manager
-        .get_token("image_gen", false, None, "dall-e-3", allowed_accounts)
+    let (access_token, project_id, email, _actual_model) = match token_manager
+        .get_token(
+            "image_gen",
+            false,
+            None,
+            "dall-e-3",
+            allowed_accounts,
+            fallback_enabled,
+        )
         .await
     {
         Ok(t) => t,
@@ -1520,6 +1541,9 @@ pub async fn handle_images_edits(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     mut multipart: axum::extract::Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
@@ -1533,6 +1557,7 @@ pub async fn handle_images_edits(
     let mut response_format = "b64_json".to_string(); // Default to b64_json for better compatibility with tools handling edits
     let mut model = "gemini-3-pro-image".to_string();
 
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1610,8 +1635,15 @@ pub async fn handle_images_edits(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     // Fix: Proper get_token call with correct signature and unwrap (using image_gen quota)
-    let (access_token, project_id, email) = match token_manager
-        .get_token("image_gen", false, None, "dall-e-3", allowed_accounts)
+    let (access_token, project_id, email, _actual_model) = match token_manager
+        .get_token(
+            "image_gen",
+            false,
+            None,
+            "dall-e-3",
+            allowed_accounts,
+            fallback_enabled,
+        )
         .await
     {
         Ok(t) => t,

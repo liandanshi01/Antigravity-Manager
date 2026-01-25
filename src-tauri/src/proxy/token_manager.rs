@@ -546,6 +546,7 @@ impl TokenManager {
     /// 参数 `force_rotate` 为 true 时将忽略锁定，强制切换账号
     /// 参数 `session_id` 用于跨请求维持会话粘性
     /// 参数 `target_model` 用于检查配额保护 (Issue #621)
+    /// 返回值: (access_token, project_id, email, actual_model) - 第4个值是降级后的实际模型名
     pub async fn get_token(
         &self,
         quota_group: &str,
@@ -553,7 +554,8 @@ impl TokenManager {
         session_id: Option<&str>,
         target_model: &str,
         allowed_accounts: Option<&Vec<String>>,
-    ) -> Result<(String, String, String), String> {
+        fallback_enabled: bool,
+    ) -> Result<(String, String, String, String), String> {
         // 【优化 Issue #284】添加 5 秒超时，防止死锁
         let timeout_duration = std::time::Duration::from_secs(5);
         match tokio::time::timeout(
@@ -564,6 +566,7 @@ impl TokenManager {
                 session_id,
                 target_model,
                 allowed_accounts,
+                fallback_enabled,
             ),
         )
         .await
@@ -576,6 +579,7 @@ impl TokenManager {
     }
 
     /// 内部实现：获取 Token 的核心逻辑
+    /// 返回值: (access_token, project_id, email, actual_model) - 第4个值是降级后的实际模型名
     async fn get_token_internal(
         &self,
         quota_group: &str,
@@ -583,7 +587,15 @@ impl TokenManager {
         session_id: Option<&str>,
         target_model: &str,
         allowed_accounts: Option<&Vec<String>>,
-    ) -> Result<(String, String, String), String> {
+        fallback_enabled: bool,
+    ) -> Result<(String, String, String, String), String> {
+        let mut current_target_model = target_model.to_string();
+
+        // ===== [FIX] 防止无限循环：添加降级深度限制 =====
+        let mut fallback_attempts = 0;
+        const MAX_FALLBACK_DEPTH: usize = 3; // 最多降级 3 次
+        let original_model = target_model.to_string(); // 保存原始模型名用于错误信息
+
         let mut tokens_snapshot: Vec<ProxyToken> =
             self.tokens.iter().map(|e| e.value().clone()).collect();
 
@@ -625,15 +637,6 @@ impl TokenManager {
             quota_b.cmp(&quota_a) // Descending: higher percentage first
         });
 
-        // 【调试日志】打印排序后的账号顺序
-        tracing::info!(
-            "🔄 [Token Rotation] Accounts: {:?}",
-            tokens_snapshot
-                .iter()
-                .map(|t| format!("{}(protected={:?})", t.email, t.protected_models))
-                .collect::<Vec<_>>()
-        );
-
         // 0. 读取当前调度配置
         let scheduling = self.sticky_config.read().await.clone();
         use crate::proxy::sticky_config::SchedulingMode;
@@ -643,212 +646,289 @@ impl TokenManager {
             .map(|cfg| cfg.quota_protection.enabled)
             .unwrap_or(false);
 
-        // ===== [FIX #820] 固定账号模式：优先使用指定账号 =====
-        let preferred_id = self.preferred_account_id.read().await.clone();
-        if let Some(ref pref_id) = preferred_id {
-            // 查找优先账号
-            if let Some(preferred_token) = tokens_snapshot.iter().find(|t| &t.account_id == pref_id)
-            {
-                // 检查账号是否可用（未限流、未被配额保护）
-                let normalized_target =
-                    crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
-                        .unwrap_or_else(|| target_model.to_string());
-
-                let is_rate_limited =
-                    self.is_rate_limited_by_account_id(&preferred_token.account_id);
-                let is_quota_protected = quota_protection_enabled
-                    && preferred_token
-                        .protected_models
-                        .contains(&normalized_target);
-
-                if !is_rate_limited && !is_quota_protected {
-                    tracing::info!(
-                        "🔒 [FIX #820] Using preferred account: {} (fixed mode)",
-                        preferred_token.email
-                    );
-
-                    // 直接使用优先账号，跳过轮询逻辑
-                    let mut token = preferred_token.clone();
-
-                    // 检查 token 是否过期（提前5分钟刷新）
-                    let now = chrono::Utc::now().timestamp();
-                    if now >= token.timestamp - 300 {
-                        tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
-                        match crate::modules::oauth::refresh_access_token(&token.refresh_token)
-                            .await
-                        {
-                            Ok(token_response) => {
-                                token.access_token = token_response.access_token.clone();
-                                token.expires_in = token_response.expires_in;
-                                token.timestamp = now + token_response.expires_in;
-
-                                if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                                    entry.access_token = token.access_token.clone();
-                                    entry.expires_in = token.expires_in;
-                                    entry.timestamp = token.timestamp;
-                                }
-                                let _ = self
-                                    .save_refreshed_token(&token.account_id, &token_response)
-                                    .await;
-                            }
-                            Err(e) => {
-                                tracing::warn!("Preferred account token refresh failed: {}", e);
-                                // 继续使用旧 token，让后续逻辑处理失败
-                            }
-                        }
-                    }
-
-                    // 确保有 project_id
-                    let project_id = if let Some(pid) = &token.project_id {
-                        pid.clone()
-                    } else {
-                        match crate::proxy::project_resolver::fetch_project_id(&token.access_token)
-                            .await
-                        {
-                            Ok(pid) => {
-                                if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                                    entry.project_id = Some(pid.clone());
-                                }
-                                let _ = self.save_project_id(&token.account_id, &pid).await;
-                                pid
-                            }
-                            Err(_) => "bamboo-precept-lgxtn".to_string(), // fallback
-                        }
-                    };
-
-                    return Ok((token.access_token, project_id, token.email));
-                } else {
-                    if is_rate_limited {
-                        tracing::warn!("🔒 [FIX #820] Preferred account {} is rate-limited, falling back to round-robin", preferred_token.email);
-                    } else {
-                        tracing::warn!("🔒 [FIX #820] Preferred account {} is quota-protected for {}, falling back to round-robin", preferred_token.email, target_model);
-                    }
-                }
-            } else {
-                tracing::warn!("🔒 [FIX #820] Preferred account {} not found in pool, falling back to round-robin", pref_id);
-            }
-        }
-        // ===== [END FIX #820] =====
-
-        // 【优化 Issue #284】将锁操作移到循环外，避免重复获取锁
-        // 预先获取 last_used_account 的快照，避免在循环中多次加锁
-        let last_used_account_id = if quota_group != "image_gen" {
-            let last_used = self.last_used_account.lock().await;
-            last_used.clone()
-        } else {
-            None
-        };
-
-        let mut attempted: HashSet<String> = HashSet::new();
-        let mut last_error: Option<String> = None;
-        let mut need_update_last_used: Option<(String, std::time::Instant)> = None;
-
-        for attempt in 0..total {
-            let rotate = force_rotate || attempt > 0;
-
-            // ===== 【核心】粘性会话与智能调度逻辑 =====
-            let mut target_token: Option<ProxyToken> = None;
+        loop {
+            // 【调试日志】打印当前目标模型和账号顺序
+            tracing::info!(
+                "🔄 [Token Rotation] Target: {}, Accounts: {:?}",
+                current_target_model,
+                tokens_snapshot
+                    .iter()
+                    .map(|t| format!("{}(protected={:?})", t.email, t.protected_models))
+                    .collect::<Vec<_>>()
+            );
 
             // 归一化目标模型名为标准 ID，用于配额保护检查
-            let normalized_target =
-                crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
-                    .unwrap_or_else(|| target_model.to_string());
+            let normalized_target = crate::proxy::common::model_mapping::normalize_to_standard_id(
+                &current_target_model,
+            )
+            .unwrap_or_else(|| current_target_model.clone());
 
-            // 模式 A: 粘性会话处理 (CacheFirst 或 Balance 且有 session_id)
-            if !rotate
-                && session_id.is_some()
-                && scheduling.mode != SchedulingMode::PerformanceFirst
-            {
-                let sid = session_id.unwrap();
+            // ===== [FIX #820] 固定账号模式：优先使用指定账号 =====
+            let preferred_id = self.preferred_account_id.read().await.clone();
+            if let Some(ref pref_id) = preferred_id {
+                // 查找优先账号
+                if let Some(preferred_token) =
+                    tokens_snapshot.iter().find(|t| &t.account_id == pref_id)
+                {
+                    // 检查账号是否可用（未限流、未被配额保护）
+                    let is_rate_limited =
+                        self.is_rate_limited_by_account_id(&preferred_token.account_id);
+                    let is_quota_protected = quota_protection_enabled
+                        && preferred_token
+                            .protected_models
+                            .contains(&normalized_target);
 
-                // 1. 检查会话是否已绑定账号
-                if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
-                    // 【修复】先通过 account_id 找到对应的账号，获取其 email
-                    // 2. 转换 email -> account_id 检查绑定的账号是否限流
-                    if let Some(bound_token) =
-                        tokens_snapshot.iter().find(|t| t.account_id == bound_id)
-                    {
-                        let key = self
-                            .email_to_account_id(&bound_token.email)
-                            .unwrap_or_else(|| bound_token.account_id.clone());
-                        let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key);
-                        if reset_sec > 0 {
-                            // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
-                            // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
-                            tracing::debug!(
-                                "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
-                                bound_token.email, reset_sec
-                            );
-                            self.session_accounts.remove(sid);
-                        } else if !attempted.contains(&bound_id)
-                            && !(quota_protection_enabled
-                                && bound_token.protected_models.contains(&normalized_target))
-                        {
-                            // 3. 账号可用且未被标记为尝试失败，优先复用
-                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
-                            target_token = Some(bound_token.clone());
-                        } else if quota_protection_enabled
-                            && bound_token.protected_models.contains(&normalized_target)
-                        {
-                            tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.", bound_token.email, normalized_target, target_model);
-                            self.session_accounts.remove(sid);
-                        }
-                    } else {
-                        // 绑定的账号已不存在（可能被删除），解绑
-                        tracing::debug!(
-                            "Sticky Session: Bound account not found for session {}, unbinding",
-                            sid
+                    if !is_rate_limited && !is_quota_protected {
+                        tracing::info!(
+                            "🔒 [FIX #820] Using preferred account: {} (fixed mode)",
+                            preferred_token.email
                         );
-                        self.session_accounts.remove(sid);
+
+                        // 直接使用优先账号，跳过轮询逻辑
+                        let mut token = preferred_token.clone();
+
+                        // 检查 token 是否过期（提前5分钟刷新）
+                        let now = chrono::Utc::now().timestamp();
+                        if now >= token.timestamp - 300 {
+                            tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
+                            match crate::modules::oauth::refresh_access_token(&token.refresh_token)
+                                .await
+                            {
+                                Ok(token_response) => {
+                                    token.access_token = token_response.access_token.clone();
+                                    token.expires_in = token_response.expires_in;
+                                    token.timestamp = now + token_response.expires_in;
+
+                                    if let Some(mut entry) = self.tokens.get_mut(&token.account_id)
+                                    {
+                                        entry.access_token = token.access_token.clone();
+                                        entry.expires_in = token.expires_in;
+                                        entry.timestamp = token.timestamp;
+                                    }
+                                    let _ = self
+                                        .save_refreshed_token(&token.account_id, &token_response)
+                                        .await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Preferred account token refresh failed: {}", e);
+                                    // 继续使用旧 token，让后续逻辑处理失败
+                                }
+                            }
+                        }
+
+                        // 确保有 project_id
+                        let project_id = if let Some(pid) = &token.project_id {
+                            pid.clone()
+                        } else {
+                            match crate::proxy::project_resolver::fetch_project_id(
+                                &token.access_token,
+                            )
+                            .await
+                            {
+                                Ok(pid) => {
+                                    if let Some(mut entry) = self.tokens.get_mut(&token.account_id)
+                                    {
+                                        entry.project_id = Some(pid.clone());
+                                    }
+                                    let _ = self.save_project_id(&token.account_id, &pid).await;
+                                    pid
+                                }
+                                Err(_) => "bamboo-precept-lgxtn".to_string(), // fallback
+                            }
+                        };
+
+                        return Ok((
+                            token.access_token,
+                            project_id,
+                            token.email,
+                            current_target_model,
+                        ));
+                    } else {
+                        if is_rate_limited {
+                            tracing::warn!("🔒 [FIX #820] Preferred account {} is rate-limited, falling back to round-robin", preferred_token.email);
+                        } else {
+                            tracing::warn!("🔒 [FIX #820] Preferred account {} is quota-protected for {}, falling back to round-robin", preferred_token.email, current_target_model);
+                        }
                     }
+                } else {
+                    tracing::warn!("🔒 [FIX #820] Preferred account {} not found in pool, falling back to round-robin", pref_id);
                 }
             }
+            // ===== [END FIX #820] =====
 
-            // 模式 B: 原子化 60s 全局锁定 (针对无 session_id 情况的默认保护)
-            // 【修复】性能优先模式应跳过 60s 锁定；
-            if target_token.is_none()
-                && !rotate
-                && quota_group != "image_gen"
-                && scheduling.mode != SchedulingMode::PerformanceFirst
-            {
-                // 【优化】使用预先获取的快照，不再在循环内加锁
-                if let Some((account_id, last_time)) = &last_used_account_id {
-                    // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
-                    if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
-                        if let Some(found) =
-                            tokens_snapshot.iter().find(|t| &t.account_id == account_id)
+            // 【优化 Issue #284】将锁操作进行快照
+            // 预先获取 last_used_account 的快照，避免在循环中多次加锁
+            let last_used_account_id = if quota_group != "image_gen" {
+                let last_used = self.last_used_account.lock().await;
+                last_used.clone()
+            } else {
+                None
+            };
+
+            let mut attempted: HashSet<String> = HashSet::new();
+            let mut last_error: Option<String> = None;
+            let mut need_update_last_used: Option<(String, std::time::Instant)> = None;
+
+            for attempt in 0..total {
+                let rotate = force_rotate || attempt > 0;
+
+                // ===== 【核心】粘性会话与智能调度逻辑 =====
+                let mut target_token: Option<ProxyToken> = None;
+
+                // 模式 A: 粘性会话处理 (CacheFirst 或 Balance 且有 session_id)
+                if !rotate
+                    && session_id.is_some()
+                    && scheduling.mode != SchedulingMode::PerformanceFirst
+                {
+                    let sid = session_id.unwrap();
+
+                    // 1. 检查会话是否已绑定账号
+                    if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
+                        // 【修复】先通过 account_id 找到对应的账号，获取其 email
+                        // 2. 转换 email -> account_id 检查绑定的账号是否限流
+                        if let Some(bound_token) =
+                            tokens_snapshot.iter().find(|t| t.account_id == bound_id)
                         {
-                            // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
-                            if !self.is_rate_limited_by_account_id(&found.account_id)
-                                && !(quota_protection_enabled
-                                    && found.protected_models.contains(&normalized_target))
-                            {
+                            let key = self
+                                .email_to_account_id(&bound_token.email)
+                                .unwrap_or_else(|| bound_token.account_id.clone());
+                            let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key);
+                            if reset_sec > 0 {
+                                // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
+                                // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
                                 tracing::debug!(
-                                    "60s Window: Force reusing last account: {}",
-                                    found.email
+                                    "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
+                                    bound_token.email, reset_sec
                                 );
-                                target_token = Some(found.clone());
-                            } else {
-                                if self.is_rate_limited_by_account_id(&found.account_id) {
+                                self.session_accounts.remove(sid);
+                            } else if !attempted.contains(&bound_id)
+                                && !(quota_protection_enabled
+                                    && bound_token.protected_models.contains(&normalized_target))
+                            {
+                                // 3. 账号可用且未被标记为尝试失败，优先复用
+                                tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
+                                target_token = Some(bound_token.clone());
+                            } else if quota_protection_enabled
+                                && bound_token.protected_models.contains(&normalized_target)
+                            {
+                                tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {}, unbinding and switching.", bound_token.email, normalized_target);
+                                self.session_accounts.remove(sid);
+                            }
+                        } else {
+                            // 绑定的账号已不存在（可能被删除），解绑
+                            tracing::debug!(
+                                "Sticky Session: Bound account not found for session {}, unbinding",
+                                sid
+                            );
+                            self.session_accounts.remove(sid);
+                        }
+                    }
+                }
+
+                // 模式 B: 原子化 60s 全局锁定 (针对无 session_id 情况的默认保护)
+                // 【修复】性能优先模式应跳过 60s 锁定；
+                if target_token.is_none()
+                    && !rotate
+                    && quota_group != "image_gen"
+                    && scheduling.mode != SchedulingMode::PerformanceFirst
+                {
+                    // 【优化】使用预先获取的快照，不再在循环内加锁
+                    if let Some((account_id, last_time)) = &last_used_account_id {
+                        // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
+                        if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
+                            if let Some(found) =
+                                tokens_snapshot.iter().find(|t| &t.account_id == account_id)
+                            {
+                                // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
+                                if !self.is_rate_limited_by_account_id(&found.account_id)
+                                    && !(quota_protection_enabled
+                                        && found.protected_models.contains(&normalized_target))
+                                {
                                     tracing::debug!(
-                                        "60s Window: Last account {} is rate-limited, skipping",
+                                        "60s Window: Force reusing last account: {}",
                                         found.email
                                     );
+                                    target_token = Some(found.clone());
                                 } else {
-                                    tracing::debug!("60s Window: Last account {} is quota-protected for model {} [{}], skipping", found.email, normalized_target, target_model);
+                                    if self.is_rate_limited_by_account_id(&found.account_id) {
+                                        tracing::debug!(
+                                            "60s Window: Last account {} is rate-limited, skipping",
+                                            found.email
+                                        );
+                                    } else {
+                                        tracing::debug!("60s Window: Last account {} is quota-protected for model {}, skipping", found.email, normalized_target);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // 若无锁定，则轮询选择新账号
-                if target_token.is_none() {
+                    // 若无锁定，则轮询选择新账号
+                    if target_token.is_none() {
+                        let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                        for offset in 0..total {
+                            let idx = (start_idx + offset) % total;
+                            let candidate = &tokens_snapshot[idx];
+                            if attempted.contains(&candidate.account_id) {
+                                continue;
+                            }
+
+                            // 【新增 #621】模型级限流检查
+                            if quota_protection_enabled
+                                && candidate.protected_models.contains(&normalized_target)
+                            {
+                                tracing::debug!(
+                                    "Account {} is quota-protected for model {}, skipping",
+                                    candidate.email,
+                                    normalized_target
+                                );
+                                continue;
+                            }
+
+                            // 【新增】主动避开限流或 5xx 锁定的账号 (高可用优化)
+                            if self.is_rate_limited_by_account_id(&candidate.account_id) {
+                                // Changed to account_id
+                                continue;
+                            }
+
+                            target_token = Some(candidate.clone());
+                            // 【优化】标记需要更新，稍后统一写回
+                            need_update_last_used =
+                                Some((candidate.account_id.clone(), std::time::Instant::now()));
+
+                            // 如果是会话首次分配且需要粘性，在此建立绑定
+                            if let Some(sid) = session_id {
+                                if scheduling.mode != SchedulingMode::PerformanceFirst {
+                                    self.session_accounts
+                                        .insert(sid.to_string(), candidate.account_id.clone());
+                                    tracing::debug!(
+                                        "Sticky Session: Bound new account {} to session {}",
+                                        candidate.email,
+                                        sid
+                                    );
+                                }
+                            }
+                            break;
+                        }
+                    }
+                } else if target_token.is_none() {
+                    // 模式 C: 纯轮询模式 (Round-robin) 或强制轮换
                     let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                    tracing::info!(
+                        "🔄 [Mode C] Round-robin from idx {}, total: {}",
+                        start_idx,
+                        total
+                    );
                     for offset in 0..total {
                         let idx = (start_idx + offset) % total;
                         let candidate = &tokens_snapshot[idx];
+
                         if attempted.contains(&candidate.account_id) {
+                            tracing::debug!(
+                                "  [{}] {} - SKIP: already attempted",
+                                idx,
+                                candidate.email
+                            );
                             continue;
                         }
 
@@ -856,284 +936,275 @@ impl TokenManager {
                         if quota_protection_enabled
                             && candidate.protected_models.contains(&normalized_target)
                         {
-                            tracing::debug!(
-                                "Account {} is quota-protected for model {} [{}], skipping",
+                            tracing::info!(
+                                "  ⛔ {} - SKIP: quota-protected for {}",
                                 candidate.email,
-                                normalized_target,
-                                target_model
+                                normalized_target
                             );
                             continue;
                         }
 
-                        // 【新增】主动避开限流或 5xx 锁定的账号 (高可用优化)
+                        // 【新增】主动避开限流或 5xx 锁定的账号
                         if self.is_rate_limited_by_account_id(&candidate.account_id) {
                             // Changed to account_id
+                            tracing::info!("  ⏳ {} - SKIP: rate-limited", candidate.email);
                             continue;
                         }
 
+                        tracing::debug!("  [{}] {} - SELECTED", idx, candidate.email);
                         target_token = Some(candidate.clone());
-                        // 【优化】标记需要更新，稍后统一写回
-                        need_update_last_used =
-                            Some((candidate.account_id.clone(), std::time::Instant::now()));
 
-                        // 如果是会话首次分配且需要粘性，在此建立绑定
-                        if let Some(sid) = session_id {
-                            if scheduling.mode != SchedulingMode::PerformanceFirst {
-                                self.session_accounts
-                                    .insert(sid.to_string(), candidate.account_id.clone());
-                                tracing::debug!(
-                                    "Sticky Session: Bound new account {} to session {}",
-                                    candidate.email,
-                                    sid
-                                );
-                            }
+                        if rotate {
+                            tracing::debug!(
+                                "Force Rotation: Switched to account: {}",
+                                candidate.email
+                            );
                         }
                         break;
                     }
                 }
-            } else if target_token.is_none() {
-                // 模式 C: 纯轮询模式 (Round-robin) 或强制轮换
-                let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
-                tracing::info!(
-                    "🔄 [Mode C] Round-robin from idx {}, total: {}",
-                    start_idx,
-                    total
-                );
-                for offset in 0..total {
-                    let idx = (start_idx + offset) % total;
-                    let candidate = &tokens_snapshot[idx];
 
-                    if attempted.contains(&candidate.account_id) {
-                        tracing::debug!(
-                            "  [{}] {} - SKIP: already attempted",
-                            idx,
-                            candidate.email
-                        );
-                        continue;
-                    }
+                let mut token = match target_token {
+                    Some(t) => t,
+                    None => {
+                        // 乐观重置策略: 双层防护机制
+                        // 当所有账号都无法选择时,可能是时序竞争导致的状态不同步
 
-                    // 【新增 #621】模型级限流检查
-                    if quota_protection_enabled
-                        && candidate.protected_models.contains(&normalized_target)
-                    {
-                        tracing::info!(
-                            "  ⛔ {} - SKIP: quota-protected for {} [{}]",
-                            candidate.email,
-                            normalized_target,
-                            target_model
-                        );
-                        continue;
-                    }
+                        // 计算最短等待时间
+                        let min_wait = tokens_snapshot
+                            .iter()
+                            .filter_map(|t| {
+                                self.rate_limit_tracker.get_reset_seconds(&t.account_id)
+                            })
+                            .min();
 
-                    // 【新增】主动避开限流或 5xx 锁定的账号
-                    if self.is_rate_limited_by_account_id(&candidate.account_id) {
-                        // Changed to account_id
-                        tracing::info!("  ⏳ {} - SKIP: rate-limited", candidate.email);
-                        continue;
-                    }
-
-                    tracing::debug!("  [{}] {} - SELECTED", idx, candidate.email);
-                    target_token = Some(candidate.clone());
-
-                    if rotate {
-                        tracing::debug!("Force Rotation: Switched to account: {}", candidate.email);
-                    }
-                    break;
-                }
-            }
-
-            let mut token = match target_token {
-                Some(t) => t,
-                None => {
-                    // 乐观重置策略: 双层防护机制
-                    // 当所有账号都无法选择时,可能是时序竞争导致的状态不同步
-
-                    // 计算最短等待时间
-                    let min_wait = tokens_snapshot
-                        .iter()
-                        .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
-                        .min();
-
-                    // Layer 1: 如果最短等待时间 <= 2秒,执行缓冲延迟
-                    if let Some(wait_sec) = min_wait {
-                        if wait_sec <= 2 {
-                            tracing::warn!(
-                                "All accounts rate-limited but shortest wait is {}s. Applying 500ms buffer for state sync...",
-                                wait_sec
-                            );
-
-                            // 缓冲延迟 500ms
-                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                            // 重新尝试选择账号
-                            let retry_token = tokens_snapshot.iter().find(|t| {
-                                !attempted.contains(&t.account_id)
-                                    && !self.is_rate_limited_by_account_id(&t.account_id)
-                            }); // Changed to account_id
-
-                            if let Some(t) = retry_token {
-                                tracing::info!(
-                                    "✅ Buffer delay successful! Found available account: {}",
-                                    t.email
-                                );
-                                t.clone()
-                            } else {
-                                // Layer 2: 缓冲后仍无可用账号,执行乐观重置
+                        // Layer 1: 如果最短等待时间 <= 2秒,执行缓冲延迟
+                        if let Some(wait_sec) = min_wait {
+                            if wait_sec <= 2 {
                                 tracing::warn!(
-                                    "Buffer delay failed. Executing optimistic reset for all {} accounts...",
-                                    tokens_snapshot.len()
+                                    "All accounts rate-limited but shortest wait is {}s. Applying 500ms buffer for state sync...",
+                                    wait_sec
                                 );
 
-                                // 清除所有限流记录
-                                self.rate_limit_tracker.clear_all();
+                                // 缓冲延迟 500ms
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-                                // 再次尝试选择账号
-                                let final_token = tokens_snapshot
-                                    .iter()
-                                    .find(|t| !attempted.contains(&t.account_id));
+                                // 重新尝试选择账号
+                                let retry_token = tokens_snapshot.iter().find(|t| {
+                                    !attempted.contains(&t.account_id)
+                                        && !self.is_rate_limited_by_account_id(&t.account_id)
+                                }); // Changed to account_id
 
-                                if let Some(t) = final_token {
+                                if let Some(t) = retry_token {
                                     tracing::info!(
-                                        "✅ Optimistic reset successful! Using account: {}",
+                                        "✅ Buffer delay successful! Found available account: {}",
                                         t.email
                                     );
                                     t.clone()
                                 } else {
-                                    // 所有策略都失败,返回错误
-                                    return Err(
-                                        "All accounts failed after optimistic reset. Please check account health.".to_string()
+                                    // Layer 2: 缓冲后仍无可用账号,执行乐观重置
+                                    tracing::warn!(
+                                        "Buffer delay failed. Executing optimistic reset for all {} accounts...",
+                                        tokens_snapshot.len()
                                     );
+
+                                    // 清除所有限流记录
+                                    self.rate_limit_tracker.clear_all();
+
+                                    // 再次尝试选择账号
+                                    let final_token = tokens_snapshot
+                                        .iter()
+                                        .find(|t| !attempted.contains(&t.account_id));
+
+                                    if let Some(t) = final_token {
+                                        tracing::info!(
+                                            "✅ Optimistic reset successful! Using account: {}",
+                                            t.email
+                                        );
+                                        t.clone()
+                                    } else {
+                                        // 所有策略都失败,返回错误
+                                        break; // 无可用账号，尝试降级
+                                    }
                                 }
+                            } else {
+                                // 等待时间 > 2秒,正常返回错误
+                                break; // 等待时间过长，跳出尝试，进入降级检测
                             }
                         } else {
-                            // 等待时间 > 2秒,正常返回错误
-                            return Err(format!(
-                                "All accounts are currently limited. Please wait {}s.",
-                                wait_sec
-                            ));
-                        }
-                    } else {
-                        // 无限流记录但仍无可用账号,可能是其他问题
-                        return Err("All accounts failed or unhealthy.".to_string());
-                    }
-                }
-            };
-
-            // 3. 检查 token 是否过期（提前5分钟刷新）
-            let now = chrono::Utc::now().timestamp();
-            if now >= token.timestamp - 300 {
-                tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
-
-                // 调用 OAuth 刷新 token
-                match crate::modules::oauth::refresh_access_token(&token.refresh_token).await {
-                    Ok(token_response) => {
-                        tracing::debug!("Token 刷新成功！");
-
-                        // 更新本地内存对象供后续使用
-                        token.access_token = token_response.access_token.clone();
-                        token.expires_in = token_response.expires_in;
-                        token.timestamp = now + token_response.expires_in;
-
-                        // 同步更新跨线程共享的 DashMap
-                        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                            entry.access_token = token.access_token.clone();
-                            entry.expires_in = token.expires_in;
-                            entry.timestamp = token.timestamp;
-                        }
-
-                        // 同步落盘（避免重启后继续使用过期 timestamp 导致频繁刷新）
-                        if let Err(e) = self
-                            .save_refreshed_token(&token.account_id, &token_response)
-                            .await
-                        {
-                            tracing::debug!("保存刷新后的 token 失败 ({}): {}", token.email, e);
+                            // 无限流记录但仍无可用账号,可能是其他问题
+                            break; // 无记录但无可用账号
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
-                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                };
+
+                // 3. 检查 token 是否过期（提前5分钟刷新）
+                let now = chrono::Utc::now().timestamp();
+                if now >= token.timestamp - 300 {
+                    tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
+
+                    // 调用 OAuth 刷新 token
+                    match crate::modules::oauth::refresh_access_token(&token.refresh_token).await {
+                        Ok(token_response) => {
+                            tracing::debug!("Token 刷新成功！");
+
+                            // 更新本地内存对象供后续使用
+                            token.access_token = token_response.access_token.clone();
+                            token.expires_in = token_response.expires_in;
+                            token.timestamp = now + token_response.expires_in;
+
+                            // 同步更新跨线程共享的 DashMap
+                            if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
+                                entry.access_token = token.access_token.clone();
+                                entry.expires_in = token.expires_in;
+                                entry.timestamp = token.timestamp;
+                            }
+
+                            // 同步落盘（避免重启后继续使用过期 timestamp 导致频繁刷新）
+                            if let Err(e) = self
+                                .save_refreshed_token(&token.account_id, &token_response)
+                                .await
+                            {
+                                tracing::debug!("保存刷新后的 token 失败 ({}): {}", token.email, e);
+                            }
+                        }
+                        Err(e) => {
                             tracing::error!(
-                                "Disabling account due to invalid_grant ({}): refresh_token likely revoked/expired",
-                                token.email
+                                "Token 刷新失败 ({}): {}，尝试下一个账号",
+                                token.email,
+                                e
                             );
-                            let _ = self
-                                .disable_account(
-                                    &token.account_id,
-                                    &format!("invalid_grant: {}", e),
-                                )
-                                .await;
-                            self.tokens.remove(&token.account_id);
-                        }
-                        // Avoid leaking account emails to API clients; details are still in logs.
-                        last_error = Some(format!("Token refresh failed: {}", e));
-                        attempted.insert(token.account_id.clone());
-
-                        // 【优化】标记需要清除锁定，避免在循环内加锁
-                        if quota_group != "image_gen" {
-                            if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
-                            {
-                                need_update_last_used =
-                                    Some((String::new(), std::time::Instant::now()));
-                                // 空字符串表示需要清除
+                            if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                                tracing::error!(
+                                    "Disabling account due to invalid_grant ({}): refresh_token likely revoked/expired",
+                                    token.email
+                                );
+                                let _ = self
+                                    .disable_account(
+                                        &token.account_id,
+                                        &format!("invalid_grant: {}", e),
+                                    )
+                                    .await;
+                                self.tokens.remove(&token.account_id);
                             }
+                            // Avoid leaking account emails to API clients; details are still in logs.
+                            last_error = Some(format!("Token refresh failed: {}", e));
+                            attempted.insert(token.account_id.clone());
+
+                            // 【优化】标记需要清除锁定，避免在循环内加锁
+                            if quota_group != "image_gen" {
+                                if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
+                                {
+                                    need_update_last_used =
+                                        Some((String::new(), std::time::Instant::now()));
+                                    // 空字符串表示需要清除
+                                }
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
+
+                // 4. 确保有 project_id
+                let project_id = if let Some(pid) = &token.project_id {
+                    pid.clone()
+                } else {
+                    tracing::debug!("账号 {} 缺少 project_id，尝试获取...", token.email);
+                    match crate::proxy::project_resolver::fetch_project_id(&token.access_token)
+                        .await
+                    {
+                        Ok(pid) => {
+                            if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
+                                entry.project_id = Some(pid.clone());
+                            }
+                            let _ = self.save_project_id(&token.account_id, &pid).await;
+                            pid
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to fetch project_id for {}: {}",
+                                token.email,
+                                e
+                            );
+                            last_error = Some(format!(
+                                "Failed to fetch project_id for {}: {}",
+                                token.email, e
+                            ));
+                            attempted.insert(token.account_id.clone());
+
+                            // 【优化】标记需要清除锁定，避免在循环内加锁
+                            if quota_group != "image_gen" {
+                                if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
+                                {
+                                    need_update_last_used =
+                                        Some((String::new(), std::time::Instant::now()));
+                                    // 空字符串表示需要清除
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                };
+
+                // 【优化】在成功返回前，统一更新 last_used_account（如果需要）
+                if let Some((new_account_id, new_time)) = need_update_last_used {
+                    if quota_group != "image_gen" {
+                        let mut last_used = self.last_used_account.lock().await;
+                        if new_account_id.is_empty() {
+                            // 空字符串表示需要清除锁定
+                            *last_used = None;
+                        } else {
+                            *last_used = Some((new_account_id, new_time));
+                        }
+                    }
+                }
+
+                return Ok((
+                    token.access_token,
+                    project_id,
+                    token.email,
+                    current_target_model,
+                ));
             }
 
-            // 4. 确保有 project_id
-            let project_id = if let Some(pid) = &token.project_id {
-                pid.clone()
-            } else {
-                tracing::debug!("账号 {} 缺少 project_id，尝试获取...", token.email);
-                match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
-                    Ok(pid) => {
-                        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                            entry.project_id = Some(pid.clone());
-                        }
-                        let _ = self.save_project_id(&token.account_id, &pid).await;
-                        pid
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
-                        last_error = Some(format!(
-                            "Failed to fetch project_id for {}: {}",
-                            token.email, e
-                        ));
-                        attempted.insert(token.account_id.clone());
-
-                        // 【优化】标记需要清除锁定，避免在循环内加锁
-                        if quota_group != "image_gen" {
-                            if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
-                            {
-                                need_update_last_used =
-                                    Some((String::new(), std::time::Instant::now()));
-                                // 空字符串表示需要清除
-                            }
-                        }
-                        continue;
-                    }
-                }
-            };
-
-            // 【优化】在成功返回前，统一更新 last_used_account（如果需要）
-            if let Some((new_account_id, new_time)) = need_update_last_used {
-                if quota_group != "image_gen" {
-                    let mut last_used = self.last_used_account.lock().await;
-                    if new_account_id.is_empty() {
-                        // 空字符串表示需要清除锁定
-                        *last_used = None;
-                    } else {
-                        *last_used = Some((new_account_id, new_time));
-                    }
+            // 如果代码执行到这里，说明当前模型下没有可用账号
+            // ===== [NEW] 模型配额降级逻辑 =====
+            if quota_protection_enabled && fallback_enabled && fallback_attempts < MAX_FALLBACK_DEPTH {
+                if let Some(fallback) =
+                    crate::proxy::common::model_mapping::get_quota_fallback(&current_target_model)
+                {
+                    fallback_attempts += 1;
+                    tracing::warn!(
+                        "🔄 [Model Fallback {}/{}] {} -> {} (all accounts quota-protected or failed)",
+                        fallback_attempts,
+                        MAX_FALLBACK_DEPTH,
+                        current_target_model,
+                        fallback
+                    );
+                    current_target_model = fallback.to_string();
+                    continue; // 重新进入循环
                 }
             }
+            // ===== [END] 模型配额降级逻辑 =====
 
-            return Ok((token.access_token, project_id, token.email));
+            // 生成用户友好的错误信息（不暴露内部降级细节）
+            // 计算最短等待时间
+            let min_wait_seconds = tokens_snapshot
+                .iter()
+                .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
+                .min()
+                .unwrap_or(300); // 默认 5 分钟
+
+            let wait_minutes = (min_wait_seconds + 59) / 60; // 向上取整到分钟
+
+            let error_msg = format!(
+                "Quota exceeded. Please try again in {} minute{}.",
+                wait_minutes,
+                if wait_minutes > 1 { "s" } else { "" }
+            );
+
+            return Err(error_msg);
         }
-
-        Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
     }
 
     async fn disable_account(&self, account_id: &str, reason: &str) -> Result<(), String> {

@@ -21,10 +21,14 @@ pub async fn handle_generate(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     Path(model_action): Path<String>,
     Json(mut body): Json<Value>, // 改为 mut 以支持修复提示词注入
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     // 解析 model:method
     let (model_name, method) = if let Some((m, action)) = model_action.rsplit_once(':') {
         (m.to_string(), action.to_string())
@@ -91,13 +95,14 @@ pub async fn handle_generate(
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email) = match token_manager
+        let (access_token, project_id, email, actual_model) = match token_manager
             .get_token(
                 &config.request_type,
                 attempt > 0,
                 Some(&session_id),
                 &config.final_model,
                 allowed_accounts,
+                fallback_enabled,
             )
             .await
         {
@@ -113,9 +118,20 @@ pub async fn handle_generate(
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
+        // 如果发生了降级，更新 mapped_model 已确保后续日志和响应一致
+        let mut final_mapped_model = mapped_model.clone();
+        if actual_model != config.final_model {
+            tracing::info!(
+                "🔄 [Model Fallback Applied] {} -> {}",
+                config.final_model,
+                actual_model
+            );
+            final_mapped_model = actual_model;
+        }
+
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(&session_id));
+        let wrapped_body = wrap_request(&body, &project_id, &final_mapped_model, Some(&session_id));
 
         // 5. 上游调用
         let query_string = if is_stream { Some("alt=sse") } else { None };
@@ -285,7 +301,7 @@ pub async fn handle_generate(
                     .header("Connection", "keep-alive")
                     .header("X-Accel-Buffering", "no")
                     .header("X-Account-Email", &email)
-                    .header("X-Mapped-Model", &mapped_model)
+                    .header("X-Mapped-Model", &final_mapped_model)
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -330,7 +346,7 @@ pub async fn handle_generate(
                 StatusCode::OK,
                 [
                     ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
+                    ("X-Mapped-Model", final_mapped_model.as_str()),
                 ],
                 Json(unwrapped),
             )
@@ -479,14 +495,25 @@ pub async fn handle_count_tokens(
     axum::Extension(allowed_accounts_ext): axum::Extension<
         Option<crate::proxy::middleware::auth::AllowedAccounts>,
     >,
+    axum::Extension(fallback_config_ext): axum::Extension<
+        Option<crate::proxy::middleware::auth::FallbackConfig>,
+    >,
     Path(_model_name): Path<String>,
     Json(_body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let allowed_accounts = allowed_accounts_ext.as_ref().map(|a| &a.0);
+    let fallback_enabled = fallback_config_ext.as_ref().map(|f| f.0).unwrap_or(true);
     let model_group = "gemini";
-    let (_access_token, _project_id, _) = state
+    let (_access_token, _project_id, _, _actual_model) = state
         .token_manager
-        .get_token(model_group, false, None, "gemini", allowed_accounts)
+        .get_token(
+            model_group,
+            false, // This argument was added
+            None,
+            "gemini",
+            allowed_accounts,
+            fallback_enabled,
+        )
         .await
         .map_err(|e| {
             (

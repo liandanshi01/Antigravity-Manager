@@ -19,6 +19,8 @@ pub enum ApiKeyEntry {
         key: String,
         #[serde(default)]
         accounts: Vec<String>,
+        #[serde(default = "default_true")]
+        fallback_enabled: bool,
     },
 }
 
@@ -34,6 +36,15 @@ impl ApiKeyEntry {
         match self {
             Self::Simple(_) => None,
             Self::Mapped { accounts, .. } => Some(accounts),
+        }
+    }
+
+    pub fn fallback_enabled(&self) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Mapped {
+                fallback_enabled, ..
+            } => *fallback_enabled,
         }
     }
 }

@@ -6,6 +6,7 @@ export interface UpstreamProxyConfig {
 export interface ApiKeyEntry {
     key: string;
     accounts?: string[];
+    fallback_enabled?: boolean;
 }
 
 export interface ProxyConfig {
