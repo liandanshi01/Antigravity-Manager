@@ -233,26 +233,21 @@ pub fn resolve_model_route(
 
 // ===== [NEW] 配额降级模块 =====
 
-/// 配额降级目标模型（固定）
-pub const QUOTA_FALLBACK_MODEL: &str = "gemini-3-pro-high";
-
 /// 获取模型的配额降级目标
 ///
-/// 当所有账号对目标模型配额不足时，自动降级到 gemini-3-pro-high
+/// 当所有账号对目标模型配额不足时，自动随机降级到 gemini-3-pro-high 或 gemini-3-flash
 ///
 /// # 参数
 /// - `model_name`: 当前请求的模型名称（已归一化或原始名称均可）
 ///
 /// # 返回
 /// - `Some(fallback_model)`: 可以降级到的模型
-/// - `None`: 该模型不支持降级（已经是 gemini-3-pro-high 或图片生成模型）
+/// - `None`: 该模型不支持降级（已经是预期目标或图片生成模型）
 ///
 /// # 示例
 /// ```ignore
-/// assert_eq!(get_quota_fallback("claude-sonnet-4-5"), Some("gemini-3-pro-high"));
-/// assert_eq!(get_quota_fallback("gemini-3-flash"), Some("gemini-3-pro-high"));
-/// assert_eq!(get_quota_fallback("gemini-3-pro-high"), None);  // 已是目标，不降级
-/// assert_eq!(get_quota_fallback("gemini-3-pro-image"), None);  // 图片模型不降级
+/// assert_eq!(get_quota_fallback("claude-sonnet-4-5"), Some("gemini-3-pro-high") | Some("gemini-3-flash"));
+/// assert_eq!(get_quota_fallback("gemini-3-pro-high"), None);
 /// ```
 pub fn get_quota_fallback(model_name: &str) -> Option<&'static str> {
     let lower = model_name.to_lowercase();
@@ -265,12 +260,18 @@ pub fn get_quota_fallback(model_name: &str) -> Option<&'static str> {
     // 2. 已经是降级目标，不再降级
     let normalized = normalize_to_standard_id(model_name).unwrap_or_else(|| model_name.to_string());
 
-    if normalized == QUOTA_FALLBACK_MODEL {
+    if normalized == "gemini-3-pro-high" || normalized == "gemini-3-flash" {
         return None;
     }
 
-    // 3. 所有其他模型都可降级到 gemini-3-flash
-    Some(QUOTA_FALLBACK_MODEL)
+    // 3. 随机选择降级到 gemini-3-pro-high 或 gemini-3-flash
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    if rng.gen_bool(0.5) {
+        Some("gemini-3-pro-high")
+    } else {
+        Some("gemini-3-flash")
+    }
 }
 
 // ===== [END] 配额降级模块 =====
