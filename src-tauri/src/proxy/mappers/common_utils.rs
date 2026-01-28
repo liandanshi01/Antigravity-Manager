@@ -158,7 +158,10 @@ pub fn parse_image_config_with_params(
             "medium" => {
                 config.insert("imageSize".to_string(), json!("2K"));
             }
-            _ => {} // "standard" 或其他，不设置
+            "standard" => {
+                config.insert("imageSize".to_string(), json!("1K"));
+            }
+            _ => {} // 其他，不设置
         }
     } else {
         // 4. 回退到模型后缀解析（保持向后兼容）
