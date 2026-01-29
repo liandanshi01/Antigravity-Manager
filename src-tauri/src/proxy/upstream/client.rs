@@ -104,7 +104,10 @@ impl UpstreamClient {
         headers.insert(
             header::USER_AGENT,
             header::HeaderValue::from_str(crate::constants::USER_AGENT.as_str())
-                .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity")),
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
+                    header::HeaderValue::from_static("antigravity")
+                }),
         );
 
         // 注入额外的 Headers (如 anthropic-beta)
@@ -218,7 +221,10 @@ impl UpstreamClient {
         headers.insert(
             header::USER_AGENT,
             header::HeaderValue::from_str(crate::constants::USER_AGENT.as_str())
-                .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity")),
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
+                    header::HeaderValue::from_static("antigravity")
+                }),
         );
 
         let mut last_err: Option<String> = None;
