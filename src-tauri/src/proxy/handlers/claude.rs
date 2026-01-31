@@ -24,7 +24,7 @@ use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 use axum::http::HeaderMap;
 use std::sync::{atomic::Ordering, Arc};
 
-const MAX_RETRY_ATTEMPTS: usize = 3;
+const MAX_RETRY_ATTEMPTS: usize = 1;
 
 // ===== Model Constants for Background Tasks =====
 // These can be adjusted for performance/cost optimization
