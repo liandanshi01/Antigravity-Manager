@@ -763,25 +763,25 @@ fn build_system_instruction(
 ) -> Option<Value> {
     let mut parts = Vec::new();
 
-    // [NEW] Antigravity 身份指令 (原始简化版)
-    let antigravity_identity = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
+    // [NEW] Claude Code 身份指令 (原始简化版)
+    let claude_code_identity = "You are Claude Code, a powerful agentic AI coding assistant.\n\
     You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
     **Absolute paths only**\n\
     **Proactiveness**";
 
-    // [HYBRID] 检查用户是否已提供 Antigravity 身份
-    let mut user_has_antigravity = false;
+    // [HYBRID] 检查用户是否已提供 Claude Code 身份
+    let mut user_has_claude_code = false;
     if let Some(sys) = system {
         match sys {
             SystemPrompt::String(text) => {
-                if text.contains("You are Antigravity") {
-                    user_has_antigravity = true;
+                if text.contains("You are Claude Code") {
+                    user_has_claude_code = true;
                 }
             }
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
-                    if block.block_type == "text" && block.text.contains("You are Antigravity") {
-                        user_has_antigravity = true;
+                    if block.block_type == "text" && block.text.contains("You are Claude Code") {
+                        user_has_claude_code = true;
                         break;
                     }
                 }
@@ -789,9 +789,9 @@ fn build_system_instruction(
         }
     }
 
-    // 如果用户没有提供 Antigravity 身份,则注入
-    if !user_has_antigravity {
-        parts.push(json!({"text": antigravity_identity}));
+    // 如果用户没有提供 Claude Code 身份,则注入
+    if !user_has_claude_code {
+        parts.push(json!({"text": claude_code_identity}));
     }
 
     // 添加用户的系统提示词
@@ -847,7 +847,7 @@ fn build_system_instruction(
     }
 
     // 如果用户没有提供任何系统提示词,添加结束标记
-    if !user_has_antigravity {
+    if !user_has_claude_code {
         parts.push(json!({"text": "\n--- [SYSTEM_PROMPT_END] ---"}));
     }
 
