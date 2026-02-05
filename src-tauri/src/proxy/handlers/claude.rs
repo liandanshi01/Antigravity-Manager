@@ -569,43 +569,8 @@ pub async fn handle_messages(
             mapped_model = actual_model;
         }
         
-        
-        // ===== 【优化】后台任务智能检测与降级 =====
-        // 使用新的检测系统，支持 5 大类关键词和多 Flash 模型策略
-        let background_task_type = detect_background_task_type(&request_for_body);
-        
         // 传递映射后的模型名
         let mut request_with_mapped = request_for_body.clone();
-
-        if let Some(task_type) = background_task_type {
-            // 检测到后台任务,强制降级到 Flash 模型
-            let downgrade_model = select_background_model(task_type);
-            
-            info!(
-                "[{}][AUTO] 检测到后台任务 (类型: {:?}),强制降级: {} -> {}",
-                trace_id,
-                task_type,
-                mapped_model,
-                downgrade_model
-            );
-            
-            // 覆盖用户自定义映射
-            mapped_model = downgrade_model.to_string();
-            
-            // 后台任务净化：
-            // 1. 移除工具定义（后台任务不需要工具）
-            request_with_mapped.tools = None;
-            
-            // 2. 移除 Thinking 配置（Flash 模型不支持）
-            request_with_mapped.thinking = None;
-            
-            // 3. 清理历史消息中的 Thinking Block，防止 Invalid Argument
-            // 使用 ContextManager 的统一策略 (Aggressive)
-            crate::proxy::mappers::context_manager::ContextManager::purify_history(
-                &mut request_with_mapped.messages, 
-                crate::proxy::mappers::context_manager::PurificationStrategy::Aggressive
-            );
-        }
 
         // ===== [3-Layer Progressive Compression + Calibrated Estimation] Context Management =====
         // [ENHANCED] 整合 3.3.47 的三层压缩框架 + PR #925 的动态校准机制
