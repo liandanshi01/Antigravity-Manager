@@ -140,7 +140,7 @@ const MODEL_GROUPS = {
     CLAUDE: [
         'claude-sonnet-4-5',
         'claude-sonnet-4-5-thinking',
-        'claude-opus-4-5-thinking'
+        'claude-opus-4-6-thinking'
     ],
     GEMINI_PRO: [
         'gemini-3-pro-high',

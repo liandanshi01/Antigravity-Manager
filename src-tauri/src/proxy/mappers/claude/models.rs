@@ -40,7 +40,8 @@ pub struct ClaudeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingConfig {
     #[serde(rename = "type")]
-    pub type_: String, // "enabled"
+    // Anthropic: historically "enabled"; Opus 4.6 migration guide recommends "adaptive".
+    pub type_: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
 }

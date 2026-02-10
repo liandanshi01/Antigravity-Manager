@@ -807,12 +807,9 @@ pub async fn handle_messages(
     
     let method = if actual_stream { "streamGenerateContent" } else { "generateContent" };
     let query = if actual_stream { Some("alt=sse") } else { None };
-        // [FIX #765] Prepare Beta Headers for Thinking + Tools
-        let mut extra_headers = std::collections::HashMap::new();
-        if request_with_mapped.thinking.is_some() && request_with_mapped.tools.is_some() {
-            extra_headers.insert("anthropic-beta".to_string(), "interleaved-thinking-2025-05-14".to_string());
-            tracing::debug!("[{}] Added Beta Header: interleaved-thinking-2025-05-14", trace_id);
-        }
+        // Opus 4.6 migration: avoid Anthropic beta headers by default.
+        // The upstream call supports extra headers, but we keep this empty for GA compatibility.
+        let extra_headers = std::collections::HashMap::new();
 
         // 5. 上游调用
         let response = match upstream
@@ -1114,11 +1111,6 @@ pub async fn handle_messages(
             if request_for_body.model.contains("claude-") {
                 let mut m = request_for_body.model.clone();
                 m = m.replace("-thinking", "");
-                if m.contains("claude-sonnet-4-5-") {
-                    m = "claude-sonnet-4-5".to_string();
-                } else if m.contains("claude-opus-4-5-") || m.contains("claude-opus-4-") {
-                    m = "claude-opus-4-5".to_string();
-                }
                 request_for_body.model = m;
             }
             

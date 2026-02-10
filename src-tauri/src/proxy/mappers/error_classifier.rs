@@ -1,6 +1,59 @@
 // 错误分类模块 - 将底层错误转换为用户友好的消息
 use reqwest::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamErrorKind {
+    Timeout,
+    Connect,
+    Decode,
+    Body,
+    Unknown,
+}
+
+pub fn stream_error_kind(error: &Error) -> StreamErrorKind {
+    if error.is_timeout() {
+        StreamErrorKind::Timeout
+    } else if error.is_connect() {
+        StreamErrorKind::Connect
+    } else if error.is_decode() {
+        StreamErrorKind::Decode
+    } else if error.is_body() {
+        StreamErrorKind::Body
+    } else {
+        StreamErrorKind::Unknown
+    }
+}
+
+pub fn classify_stream_error_kind(kind: StreamErrorKind) -> (&'static str, &'static str, &'static str) {
+    match kind {
+        StreamErrorKind::Timeout => (
+            "timeout_error",
+            "Request timeout, please check your network connection",
+            "errors.stream.timeout_error",
+        ),
+        StreamErrorKind::Connect => (
+            "connection_error",
+            "Connection failed, please check your network or proxy settings",
+            "errors.stream.connection_error",
+        ),
+        StreamErrorKind::Decode => (
+            "decode_error",
+            "Network unstable, data transmission interrupted. Try: 1) Check network 2) Switch proxy 3) Retry",
+            "errors.stream.decode_error",
+        ),
+        StreamErrorKind::Body => (
+            "stream_error",
+            "Stream transmission error, please retry later",
+            "errors.stream.stream_error",
+        ),
+        StreamErrorKind::Unknown => (
+            "unknown_error",
+            "Unknown error occurred",
+            "errors.stream.unknown_error",
+        ),
+    }
+}
+
 /// 分类流式响应错误并返回错误类型、英文消息和 i18n key
 /// 
 /// 返回值: (错误类型, 英文错误消息, i18n_key)
@@ -8,37 +61,7 @@ use reqwest::Error;
 /// - 英文消息: fallback 消息,供非浏览器客户端使用
 /// - i18n_key: 前端翻译键,供浏览器客户端本地化
 pub fn classify_stream_error(error: &Error) -> (&'static str, &'static str, &'static str) {
-    if error.is_timeout() {
-        (
-            "timeout_error",
-            "Request timeout, please check your network connection",
-            "errors.stream.timeout_error"
-        )
-    } else if error.is_connect() {
-        (
-            "connection_error",
-            "Connection failed, please check your network or proxy settings",
-            "errors.stream.connection_error"
-        )
-    } else if error.is_decode() {
-        (
-            "decode_error",
-            "Network unstable, data transmission interrupted. Try: 1) Check network 2) Switch proxy 3) Retry",
-            "errors.stream.decode_error"
-        )
-    } else if error.is_body() {
-        (
-            "stream_error",
-            "Stream transmission error, please retry later",
-            "errors.stream.stream_error"
-        )
-    } else {
-        (
-            "unknown_error",
-            "Unknown error occurred",
-            "errors.stream.unknown_error"
-        )
-    }
+    classify_stream_error_kind(stream_error_kind(error))
 }
 
 #[cfg(test)]
@@ -46,54 +69,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_classify_timeout_error() {
-        // 创建一个模拟的超时错误
-        let url = "http://example.com";
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(1))
-            .build()
-            .unwrap();
-        
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let error = rt.block_on(async {
-            client.get(url).send().await.unwrap_err()
-        });
-        
-        if error.is_timeout() {
-            let (error_type, message, i18n_key) = classify_stream_error(&error);
-            assert_eq!(error_type, "timeout_error");
-            assert!(message.contains("timeout"));
-            assert_eq!(i18n_key, "errors.stream.timeout_error");
-        }
+    fn test_classify_timeout_kind() {
+        let (error_type, message, i18n_key) = classify_stream_error_kind(StreamErrorKind::Timeout);
+        assert_eq!(error_type, "timeout_error");
+        assert!(message.to_lowercase().contains("timeout"));
+        assert_eq!(i18n_key, "errors.stream.timeout_error");
     }
 
     #[test]
     fn test_error_message_format() {
-        // 测试错误消息格式
-        let url = "http://invalid-domain-that-does-not-exist-12345.com";
-        let client = reqwest::Client::new();
-        
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let error = rt.block_on(async {
-            client.get(url).send().await.unwrap_err()
-        });
-        
-        let (error_type, message, i18n_key) = classify_stream_error(&error);
-        
-        // 错误类型应该是已知的类型之一
-        assert!(
-            error_type == "timeout_error" ||
-            error_type == "connection_error" ||
-            error_type == "decode_error" ||
-            error_type == "stream_error" ||
-            error_type == "unknown_error"
-        );
-        
-        // 消息不应该为空
-        assert!(!message.is_empty());
-        
-        // i18n_key 应该以 errors.stream. 开头
-        assert!(i18n_key.starts_with("errors.stream."));
+        // No network calls in unit tests (reqwest may consult system proxy config and panic in CI/sandbox).
+        for kind in [
+            StreamErrorKind::Timeout,
+            StreamErrorKind::Connect,
+            StreamErrorKind::Decode,
+            StreamErrorKind::Body,
+            StreamErrorKind::Unknown,
+        ] {
+            let (error_type, message, i18n_key) = classify_stream_error_kind(kind);
+            assert!(!error_type.is_empty());
+            assert!(!message.is_empty());
+            assert!(i18n_key.starts_with("errors.stream."));
+        }
     }
 
     #[test]

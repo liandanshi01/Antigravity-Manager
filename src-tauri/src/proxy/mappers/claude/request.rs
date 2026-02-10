@@ -332,6 +332,11 @@ fn reorder_gemini_parts(parts: &mut Vec<Value>) {
     parts.extend(tool_parts);
 }
 
+fn thinking_type_enables_thinking(type_: &str) -> bool {
+    // Opus 4.6 migration guide recommends thinking.type="adaptive"; keep backward compat with "enabled".
+    matches!(type_.to_lowercase().as_str(), "enabled" | "adaptive")
+}
+
 pub fn transform_claude_request_in(
     claude_req: &ClaudeRequest,
     project_id: &str,
@@ -443,7 +448,7 @@ pub fn transform_claude_request_in(
     let mut is_thinking_enabled = claude_req
         .thinking
         .as_ref()
-        .map(|t| t.type_ == "enabled")
+        .map(|t| thinking_type_enables_thinking(&t.type_))
         .unwrap_or_else(|| {
             // [Claude Code v2.0.67+] Default thinking enabled for Opus 4.5
             // If no thinking config is provided, enable by default for Opus models
@@ -666,16 +671,16 @@ fn should_disable_thinking_due_to_history(messages: &[Message]) -> bool {
 
 /// Check if thinking mode should be enabled by default for a given model
 ///
-/// Claude Code v2.0.67+ enables thinking by default for Opus 4.5 models.
+/// Claude Code v2.0.67+ enables thinking by default for Opus models (4.6+).
 /// This function determines if the model should have thinking enabled
 /// when no explicit thinking configuration is provided.
 fn should_enable_thinking_by_default(model: &str) -> bool {
     let model_lower = model.to_lowercase();
 
-    // Enable thinking by default for Opus 4.5 variants
-    if model_lower.contains("opus-4-5") || model_lower.contains("opus-4.5") {
+    // Enable thinking by default for Opus 4.6 variants
+    if model_lower.contains("opus-4-6") || model_lower.contains("opus-4.6") {
         tracing::debug!(
-            "[Thinking-Mode] Auto-enabling thinking for Opus 4.5 model: {}",
+            "[Thinking-Mode] Auto-enabling thinking for Opus 4.6 model: {}",
             model
         );
         return true;
@@ -1670,7 +1675,7 @@ fn build_generation_config(
     // Thinking 配置
     if let Some(thinking) = &claude_req.thinking {
         // [New Check] 必须 is_thinking_enabled 为真才生成 thinkingConfig
-        if thinking.type_ == "enabled" && is_thinking_enabled {
+        if thinking_type_enables_thinking(&thinking.type_) && is_thinking_enabled {
             let mut thinking_config = json!({"includeThoughts": true});
 
             if let Some(budget_tokens) = thinking.budget_tokens {
@@ -2151,6 +2156,42 @@ mod tests {
 
         // 验证: 依然能生成有效的请求体
         assert!(request.get("contents").is_some());
+    }
+
+    #[test]
+    fn test_thinking_type_adaptive_is_treated_as_enabled() {
+        let req = ClaudeRequest {
+            model: "claude-opus-4-6-thinking".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Hello".to_string()),
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: Some(ThinkingConfig {
+                type_: "adaptive".to_string(),
+                budget_tokens: Some(1024),
+            }),
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        let result = transform_claude_request_in(&req, "test-project", false);
+        assert!(result.is_ok());
+
+        let body = result.unwrap();
+        let gen_config = body["request"]["generationConfig"].as_object().unwrap();
+        assert!(
+            gen_config.get("thinkingConfig").is_some(),
+            "thinkingConfig should be generated when thinking.type=adaptive"
+        );
     }
 
     #[test]

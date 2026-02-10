@@ -6,7 +6,7 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     let mut m = HashMap::new();
 
     // 直接支持的模型
-    m.insert("claude-opus-4-5-thinking", "claude-opus-4-5-thinking");
+    m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
     m.insert("claude-sonnet-4-5", "claude-sonnet-4-5");
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking");
 
@@ -14,8 +14,11 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-thinking");
     m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-5");
     m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-5");
-    m.insert("claude-opus-4", "claude-opus-4-5-thinking");
-    m.insert("claude-opus-4-5-20251101", "claude-opus-4-5-thinking");
+    // Default Opus 4 -> Opus 4.6
+    m.insert("claude-opus-4", "claude-opus-4-6-thinking");
+    // Claude Opus 4.6 (Thinking)
+    m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
     m.insert("claude-haiku-4", "claude-sonnet-4-5");
     m.insert("claude-3-haiku-20240307", "claude-sonnet-4-5");
     m.insert("claude-haiku-4-5-20251001", "claude-sonnet-4-5");
@@ -65,8 +68,14 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         return input.to_string();
     }
 
-    // [NEW] Intelligent fallback based on model keywords
+    // Claude Opus 4.6: 允许包含日期后缀等变体，统一落到 4.6 thinking
+    // 避免被后续的 "opus" 关键字兜底误映射到 gemini。
     let lower = input.to_lowercase();
+    if lower.contains("claude-opus-4-6") {
+        return "claude-opus-4-6-thinking".to_string();
+    }
+
+    // [NEW] Intelligent fallback based on model keywords
     if lower.contains("opus") {
         return "gemini-3-pro-preview".to_string();
     }
@@ -136,7 +145,7 @@ pub async fn get_all_dynamic_models(
 /// Examples:
 /// - `gpt-4*` matches `gpt-4`, `gpt-4-turbo` ✓
 /// - `claude-*-sonnet-*` matches `claude-3-5-sonnet-20241022` ✓
-/// - `*-thinking` matches `claude-opus-4-5-thinking` ✓
+/// - `*-thinking` matches `claude-opus-4-6-thinking` ✓
 /// - `a*b*c` matches `a123b456c` ✓
 fn wildcard_match(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
@@ -296,9 +305,10 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         "gemini-3-pro-high" | "gemini-3-pro-low" => Some("gemini-3-pro-high".to_string()),
 
         // Claude 4.5 Sonnet Group
-        "claude-sonnet-4-5" | "claude-sonnet-4-5-thinking" | "claude-opus-4-5-thinking" => {
-            Some("claude-sonnet-4-5".to_string())
-        }
+        "claude-sonnet-4-5"
+        | "claude-sonnet-4-5-thinking"
+        | "claude-opus-4-6-thinking"
+        | "claude-opus-4-6" => Some("claude-sonnet-4-5".to_string()),
 
         _ => None,
     }
@@ -316,7 +326,15 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("claude-opus-4"),
-            "claude-opus-4-5-thinking"
+            "claude-opus-4-6-thinking"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-opus-4-6"),
+            "claude-opus-4-6-thinking"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-opus-4-6-20260201"),
+            "claude-opus-4-6-thinking"
         );
         // Test gemini pass-through (should not be caught by "mini" rule)
         assert_eq!(
@@ -345,7 +363,7 @@ mod tests {
         assert_eq!(resolve_model_route("gpt-3.5", &custom), "fallback");
         // Suffix constraint is more specific than prefix-only
         assert_eq!(
-            resolve_model_route("claude-opus-4-5-thinking", &custom),
+            resolve_model_route("claude-opus-4-6-thinking", &custom),
             "opus-thinking"
         );
         assert_eq!(
