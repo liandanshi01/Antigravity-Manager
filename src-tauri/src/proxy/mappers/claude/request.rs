@@ -481,7 +481,9 @@ pub fn transform_claude_request_in(
 
     // [FIX #295 & #298] If thinking enabled but no signature available,
     // disable thinking to prevent Gemini 3 Pro rejection
-    if is_thinking_enabled {
+    // [FIX] Skip signature check for Claude native models — they don't need thought_signature
+    // The signature mechanism is only required by Gemini backend; Claude API handles thinking natively
+    if is_thinking_enabled && !mapped_model.starts_with("claude-") {
         let global_sig = get_thought_signature();
 
         // Check if there are any thinking blocks in message history
