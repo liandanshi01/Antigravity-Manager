@@ -333,26 +333,35 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         // Concurrently fetch quotas (batch size 5)
         let batch_size = 5;
         for batch in target_accounts.chunks(batch_size) {
-            let mut handles = Vec::new();
-            for account in batch {
-                let account = account.clone();
-                let handle = tokio::spawn(async move {
-                    let (token, pid) = match get_valid_token_for_warmup(&account).await {
-                        Ok(t) => t,
-                        Err(_) => return None,
-                    };
-                    let quota = fetch_quota_with_cache(&token, &account.email, Some(&pid)).await.ok();
-                    Some((account.email.clone(), token, pid, quota))
-                });
-                handles.push(handle);
-            }
+                let mut handles = Vec::new();
+                for account in batch {
+                    let account = account.clone();
+                    let handle = tokio::spawn(async move {
+                        let (token, pid) = match get_valid_token_for_warmup(&account).await {
+                            Ok(t) => t,
+                            Err(_) => return None,
+                        };
+                        let quota = fetch_quota_with_cache(&token, &account.email, Some(&pid)).await.ok();
+                        Some((account.id.clone(), account.email.clone(), token, pid, quota))
+                    });
+                    handles.push(handle);
+                }
 
-            for handle in handles {
-                if let Ok(Some((email, token, pid, Some((fresh_quota, _))))) = handle.await {
-                    let mut account_warmed_series = std::collections::HashSet::new();
-                    for m in fresh_quota.models {
-                        if m.percentage >= 100 {
-                            let model_to_ping = m.name.clone();
+                for handle in handles {
+                    if let Ok(Some((id, email, token, pid, Some((fresh_quota, _))))) = handle.await {
+                        // 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+                        if fresh_quota.is_forbidden {
+                            crate::modules::logger::log_warn(&format!(
+                                "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+                                email
+                            ));
+                            let _ = crate::modules::account::update_account_quota(&id, fresh_quota);
+                            continue;
+                        }
+                        let mut account_warmed_series = std::collections::HashSet::new();
+                        for m in fresh_quota.models {
+                            if m.percentage >= 100 {
+                                let model_to_ping = m.name.clone();
                             
                             match model_to_ping.as_str() {
                                 "gemini-3-flash" | "claude-sonnet-4-5" | "gemini-3-pro-high" | "gemini-3-pro-image" => {
@@ -466,6 +475,16 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     let email = account_owned.email.clone();
     let (token, pid) = get_valid_token_for_warmup(&account_owned).await?;
     let (fresh_quota, _) = fetch_quota_with_cache(&token, &email, Some(&pid)).await.map_err(|e| format!("Failed to fetch quota: {}", e))?;
+
+    // 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+    if fresh_quota.is_forbidden {
+        crate::modules::logger::log_warn(&format!(
+            "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+            email
+        ));
+        let _ = crate::modules::account::update_account_quota(account_id, fresh_quota);
+        return Err("Account is forbidden (403)".to_string());
+    }
     
     let mut models_to_warm = Vec::new();
     let mut warmed_series = std::collections::HashSet::new();

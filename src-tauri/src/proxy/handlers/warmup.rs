@@ -202,6 +202,26 @@ pub async fn handle_warmup(
             } else {
                 let status_code = status.as_u16();
                 let error_text = response.text().await.unwrap_or_default();
+
+                // 预热阶段检测到 403 时，标记账号为 forbidden，避免无效账号继续参与轮询
+                if status_code == 403 {
+                    warn!(
+                        "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
+                        req.email
+                    );
+                    if let Ok(accounts) = crate::modules::account::list_accounts() {
+                        if let Some(account) = accounts.iter().find(|a| a.email == req.email) {
+                            let mut quota = crate::models::QuotaData::new();
+                            quota.is_forbidden = true;
+                            if let Err(e) =
+                                crate::modules::account::update_account_quota(&account.id, quota)
+                            {
+                                warn!("[Warmup-API] Failed to persist forbidden status: {}", e);
+                            }
+                        }
+                    }
+                }
+
                 (
                     StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     Json(WarmupResponse {
